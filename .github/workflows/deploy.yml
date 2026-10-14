@@ -1,0 +1,68 @@
+name: Build data and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Leave blank for the ABS 2021 boundaries. To move to newer ABS boundaries
+      # (e.g. ASGS Edition 4 / 2026 once Suburbs and Postal Areas are released) put the new zip URLs here.
+      SAL_URL: ''
+      POA_URL: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Cache boundary downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/*.zip
+            .cache/*.geojson
+          key: boundaries-v2-${{ hashFiles('scripts/build-data.mjs', '.github/workflows/deploy.yml') }}
+          restore-keys: boundaries-v2-
+
+      - name: Build boundary data
+        timeout-minutes: 40
+        run: |
+          node scripts/build-data.mjs --out site/build/data
+          du -sh site/build/data site/build/data/*
+          ls site/build/data/*/ | head -100
+
+      - name: Cache-bust scripts and styles
+        run: sed -i "s/?v=dev/?v=${GITHUB_SHA::7}/g" site/index.html site/*/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,889 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{var t=localStorage.getItem("kmlm-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<title>Number zones · KML Master</title>
+<meta name="description" content="Renumber the zones in a KML or KMZ file in a sensible order, check them on a map, and download the renamed KML.">
+<style>
+/* Number: tool-specific styles. Shared look comes from ../kit/kit.css */
+:root {
+  --bg: var(--kit-paper); --sheet: var(--kit-surface); --ink: var(--kit-ink); --muted: var(--kit-muted); --line: var(--kit-line);
+  --accent: var(--kit-accent); --accent-ink: var(--kit-accent-ink);
+  --zone: var(--kit-zone-fill); --zone-edge: var(--kit-zone);
+  --skip: rgba(110, 122, 116, .10); --skip-edge: #9aa59f;
+  --tag: var(--kit-ink); --tag-ink: var(--kit-surface); --path: var(--kit-signal);
+  --font-data: var(--kit-mono);
+}
+fieldset { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; min-width: 0; min-inline-size: 0; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg label { display: grid; gap: 2px; padding: 8px 10px; cursor: pointer; font-size: .85rem; }
+.seg label + label { border-left: 1px solid var(--line); }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label:has(input:checked) { background: var(--ink); color: var(--sheet); }
+.seg label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.field { display: grid; gap: 5px; min-width: 0; }
+.field label { font-size: 12.5px; color: var(--muted); }
+.startbox { display: flex; justify-content: space-between; align-items: center; gap: 8px; font: 12.5px var(--kit-mono); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; }
+.startbox span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#map polygon, #map circle.hit { cursor: pointer; }
+#map .hl { stroke: var(--path); stroke-width: 3.5; fill: var(--zone); }
+.maptoggle { font-size: 12.5px; color: var(--muted); align-items: center !important; }
+.maptoggle select { width: auto !important; height: 28px !important; padding: 0 6px !important; font-size: 12.5px !important; }
+.manual { font-size: 12.5px; font-weight: 600; color: var(--path); }
+td.grip { width: 1%; padding: 0 0 0 8px; }
+.handle { background: none; border: 0; color: var(--muted); font-size: 1.05rem; line-height: 1; padding: 6px 6px; cursor: grab; touch-action: none; border-radius: 4px; }
+.handle:hover { color: var(--ink); background: var(--bg); }
+tr.dragging { background: var(--zone); outline: 2px solid var(--accent); outline-offset: -2px; }
+tr.dragging .handle { cursor: grabbing; color: var(--accent); }
+tbody tr:hover td { background: var(--kit-sunken); }
+body.is-dragging { user-select: none; cursor: grabbing; }
+#map text { font-family: var(--kit-mono); font-weight: 600; }
+#map .tag { cursor: grab; touch-action: none; }
+#map .veil { fill: var(--sheet); opacity: .18; }
+#map .tiles.dark image { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.6); }
+#map.sat .veil { fill: #000; opacity: .12; }
+#map.sat polygon { stroke: #ffffff; fill: rgba(255,255,255,.10); }
+#map.sat polyline { stroke: #ff8a3d; }
+#map.sat .hl, #map.sat .drop-target { stroke: var(--path); stroke-width: 4; }
+#map .tag:hover rect { stroke: var(--path); stroke-width: 2; }
+#map .tag.lifted { opacity: .35; }
+#map .tag.locked rect { stroke: var(--path); stroke-width: 1.5; stroke-dasharray: 3 2; }
+#map .ghost { pointer-events: none; }
+#map .ghost rect { stroke: var(--path); stroke-width: 2; }
+#map .drop-target { stroke: var(--path); stroke-width: 4; fill: var(--zone); stroke-dasharray: 6 4; }
+
+/* stage */
+#map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.stats { font: 12.5px var(--kit-mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+.attrib { position: absolute; right: 0; bottom: 0; z-index: 10; font-size: 11px; background: color-mix(in srgb, var(--sheet) 80%, transparent); padding: 1px 6px; color: var(--muted); }
+.kit-sheet-head .hint { flex: 1 1 260px; }
+td.num { font-family: var(--kit-mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+td.new { font-weight: 600; }
+td.old { color: var(--muted); }
+</style>
+<link rel="stylesheet" href="../kit/kit.css?v=dev">
+</head>
+<body class="kit" data-tool="number">
+<header class="kit-bar" id="kitBar"></header>
+<script src="../kit/kit.js?v=dev"></script>
+
+<div class="kit-app">
+  <aside class="kit-panel" aria-label="Settings">
+    <div class="kit-scroll">
+      <div class="kit-intro">
+        <h1>Number zones</h1>
+        <p>Pick how the numbers should run across the site, check them on the map, then download the renamed KML.</p>
+      </div>
+
+      <fieldset>
+        <div class="label"><span class="kit-step">1</span>Source file</div>
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose a KML or KMZ file">
+          <strong>Open KML or KMZ</strong>
+          <span>Click to choose a file, or drop it here.</span>
+          <span class="file" id="fileName">sample-event-site.kml</span>
+        </div>
+        <input type="file" id="fileInput" data-kit-kml accept=".kml,.kmz,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz" hidden>
+      </fieldset>
+
+      <fieldset>
+        <div class="label"><span class="kit-step">2</span>Order</div>
+        <div class="field">
+          <label for="mode">Method</label>
+          <select id="mode">
+            <optgroup label="Grid">
+              <option value="rows">Rows: north to south, then west to east</option>
+              <option value="cols">Columns: west to east, then north to south</option>
+              <option value="snake">Snake rows: zig-zag, no walking back</option>
+            </optgroup>
+            <optgroup label="Route">
+              <option value="path">Smart path: shortest walk</option>
+              <option value="spiral">Spiral: from the centre out</option>
+              <option value="hilbert">Clustered: neighbours stay close</option>
+            </optgroup>
+            <optgroup label="Other">
+              <option value="radial">Clock sweep: around the centre</option>
+              <option value="area">Size: largest first</option>
+            </optgroup>
+          </select>
+        </div>
+        <p class="hint" id="modeHint"></p>
+        <div class="field" id="tolField">
+          <label for="tol"><span id="tolLabel">Row grouping</span>: <span id="tolVal">50%</span> of a zone's size</label>
+          <input type="range" id="tol" min="5" max="200" step="5" value="50">
+        </div>
+        <label class="check" id="cwField"><input type="checkbox" id="ccw">Anticlockwise</label>
+        <label class="check"><input type="checkbox" id="reverse">Reverse the order</label>
+        <div class="startbox" id="startBox">
+          <span id="startText">Start: auto</span>
+          <button type="button" class="link" id="clearStart">Reset</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <div class="label"><span class="kit-step">3</span>Names</div>
+        <div class="row">
+          <div class="field"><label for="prefix">Prefix</label><input type="text" id="prefix" value="Zone "></div>
+          <div class="field"><label for="suffix">Suffix</label><input type="text" id="suffix" value=""></div>
+        </div>
+        <div class="field" id="styleField">
+          <label for="style">Numbering style</label>
+          <select id="style">
+            <option value="seq">Sequential: 1, 2, 3</option>
+            <option value="grid">Row letter: A1, A2, B1</option>
+          </select>
+        </div>
+        <div class="row">
+          <div class="field"><label for="start">Start at</label><input type="number" id="start" value="1" step="1"></div>
+          <div class="field"><label for="pad">Digits</label><input type="number" id="pad" value="1" min="1" max="6" step="1"></div>
+        </div>
+        <label class="check"><input type="checkbox" id="polyOnly" checked>Only number polygons (leave pins and lines alone)</label>
+        <label class="check"><input type="checkbox" id="keepOld">Keep the old name after the number</label>
+      </fieldset>
+    </div>
+
+    <div class="kit-actions">
+      <button type="button" class="btn primary" id="saveBtn">Download renamed KML</button>
+      <div class="kit-btns">
+        <button type="button" class="btn small" id="xlsxBtn">Name list (.xlsx)</button>
+        <button type="button" class="btn small" id="copyBtn">Copy KML</button>
+      </div>
+      <p class="status" id="status" role="status"></p>
+    </div>
+  </aside>
+
+  <main class="kit-stage kit-split">
+    <div class="kit-strip">
+        <div class="top">
+          <span class="stats" id="stats">—</span>
+          <span class="kit-tag sample" id="sampleTag">Sample file</span>
+          <label class="check maptoggle">Base map
+            <select id="basemap" aria-label="Base map">
+              <option value="streets">Streets</option>
+              <option value="sat">Satellite</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+        </div>
+        <div class="kit-legend">
+          <span><i style="background:var(--zone);border:1px solid var(--zone-edge)"></i>Numbered zone</span>
+          <span><i style="background:var(--skip);border:1px solid var(--skip-edge)"></i>Left as is</span>
+          <span><i style="background:var(--path);height:2px"></i>Numbering order</span>
+          <span><i style="background:transparent;border:2px solid var(--path);border-radius:50%;width:12px;height:12px"></i>Start</span>
+        </div>
+    </div>
+    <div class="kit-mapbox">
+      <svg id="map" role="img" aria-label="Map preview of numbered zones"></svg>
+      <span class="attrib" id="attrib"></span>
+    </div>
+    <section class="kit-sheet" aria-label="New names">
+      <div class="kit-sheet-head">
+        <span class="hint" id="dragHint">Drag ⠿ to move a zone in this list, or drag a number on the map onto another zone.</span>
+        <label class="check maptoggle">Dropping a number
+          <select id="dropMode" aria-label="What happens when you drop a number on the map">
+            <option value="relock">Swaps, then recalculates the rest</option>
+            <option value="swap">Swaps only</option>
+            <option value="insert">Inserts and shifts the rest</option>
+          </select>
+        </label>
+        <span class="manual" id="manualTag" hidden><span id="manualText">Hand-adjusted</span>, <button type="button" class="link" id="resetManual">reset to method</button></span>
+      </div>
+      <div class="kit-sheet-body" id="tableWrap">
+        <table class="kit-table">
+          <thead><tr><th aria-label="Move"></th><th>#</th><th>New name</th><th>Old name</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const KMLNS = "http://www.opengis.net/kml/2.2";
+  let doc = null, hadDecl = true, baseName = "sample-event-site", items = [], ordered = [];
+
+  // ---------- sample data (an event site laid out in loose rows) ----------
+  function sampleKml() {
+    const names = ["Bar tent","Untitled Polygon","Gate B queue","Merch","Food court N","Stage left","Polygon 7","First aid","Food court S","VIP","Toilets","Sponsor wall"];
+    const base = [151.0690, -33.8470];
+    let pm = "", k = 0;
+    const rows = [[0,1,2,3],[0,1.1,2.05,3.1],[0.1,1,2,2.95]];
+    rows.forEach((cols, r) => cols.forEach((c, i) => {
+      const jitterY = ((k * 37) % 7 - 3) * 0.00003;
+      const w = 0.0007 + ((k * 13) % 5) * 0.00008, h = 0.0005 + ((k * 7) % 4) * 0.00006;
+      const x = base[0] + c * 0.0011, y = base[1] - r * 0.0010 + jitterY;
+      const ring = [[x,y],[x+w,y],[x+w,y-h],[x,y-h],[x,y]].map(p => p[0].toFixed(6)+","+p[1].toFixed(6)+",0").join(" ");
+      pm += `<Placemark><name>${names[k]}</name><Polygon><outerBoundaryIs><LinearRing><coordinates>${ring}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
+      k++;
+    }));
+    { // a C-shaped zone, open to the east, to show labels stay inside awkward shapes
+      const x = base[0] + 0.0001, y = base[1] - 0.0031, W = 0.0016, H = 0.0009, t = 0.00028;
+      const c = [[x,y],[x+W,y],[x+W,y-t],[x+t,y-t],[x+t,y-H+t],[x+W,y-H+t],[x+W,y-H],[x,y-H],[x,y]];
+      pm += `<Placemark><name>Grandstand wrap</name><Polygon><outerBoundaryIs><LinearRing><coordinates>${c.map(p => p[0].toFixed(6)+","+p[1].toFixed(6)+",0").join(" ")}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
+    }
+    pm += `<Placemark><name>Site office</name><Point><coordinates>${(base[0]+0.0049).toFixed(6)},${(base[1]-0.0002).toFixed(6)},0</coordinates></Point></Placemark>`;
+    // shuffle placemark order in the file so the renumbering is visible
+    return `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="${KMLNS}"><Document><name>Event site</name>${pm}</Document></kml>`;
+  }
+
+  // ---------- parsing ----------
+  function childByLocal(el, name) {
+    for (const c of el.children) if (c.localName === name) return c;
+    return null;
+  }
+  // ---------- label placement: the point inside a polygon furthest from its edges ----------
+  // (works for C, L and U shapes where the bounding-box centre falls outside the zone)
+  function segDist2(px, py, ax, ay, bx, by) {
+    let dx = bx - ax, dy = by - ay;
+    if (dx || dy) {
+      const t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy);
+      if (t > 1) { ax = bx; ay = by; } else if (t > 0) { ax += dx * t; ay += dy * t; }
+    }
+    dx = px - ax; dy = py - ay; return dx * dx + dy * dy;
+  }
+  function edgeDist(x, y, ring) { // positive inside, negative outside
+    let inside = false, min = Infinity;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [ax, ay] = ring[i], [bx, by] = ring[j];
+      if ((ay > y) !== (by > y) && x < (bx - ax) * (y - ay) / (by - ay) + ax) inside = !inside;
+      min = Math.min(min, segDist2(x, y, ax, ay, bx, by));
+    }
+    return (inside ? 1 : -1) * Math.sqrt(min);
+  }
+  function polylabel(ring) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of ring) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    const w = x1 - x0, h = y1 - y0, size = Math.min(w, h);
+    if (!size) return [(x0 + x1) / 2, (y0 + y1) / 2];
+    const cell = (x, y, hh) => { const d = edgeDist(x, y, ring); return { x, y, h: hh, d, max: d + hh * Math.SQRT2 }; };
+    const queue = [];
+    for (let x = x0; x < x1; x += size) for (let y = y0; y < y1; y += size) queue.push(cell(x + size / 2, y + size / 2, size / 2));
+    // seed with the area centroid, which is right for most ordinary shapes
+    let a = 0, cx = 0, cy = 0;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) { const f = ring[i][0] * ring[j][1] - ring[j][0] * ring[i][1]; cx += (ring[i][0] + ring[j][0]) * f; cy += (ring[i][1] + ring[j][1]) * f; a += f * 3; }
+    let best = a ? cell(cx / a, cy / a, 0) : cell((x0 + x1) / 2, (y0 + y1) / 2, 0);
+    const precision = Math.max(w, h) / 300; let guard = 0;
+    while (queue.length && guard++ < 4000) {
+      let bi = 0; for (let i = 1; i < queue.length; i++) if (queue[i].max > queue[bi].max) bi = i;
+      const c = queue[bi]; queue[bi] = queue[queue.length - 1]; queue.pop();
+      if (c.d > best.d) best = c;
+      if (c.max - best.d <= precision) continue;
+      const hh = c.h / 2;
+      queue.push(cell(c.x - hh, c.y - hh, hh), cell(c.x + hh, c.y - hh, hh), cell(c.x - hh, c.y + hh, hh), cell(c.x + hh, c.y + hh, hh));
+    }
+    return [best.x, best.y];
+  }
+  function labelPoint(shapes, x0, x1, y0, y1) {
+    const polys = shapes.filter(s => s.type === "poly" && s.pts.length >= 3);
+    const kx = Math.cos(((y0 + y1) / 2) * Math.PI / 180);
+    if (polys.length) {
+      // largest part of a multi-part zone, worked in local metres-ish units
+      const big = polys.reduce((b, s) => { let a = 0; const p = s.pts; for (let i = 0, j = p.length - 1; i < p.length; j = i++) a += (p[j][0] + p[i][0]) * (p[j][1] - p[i][1]); a = Math.abs(a); return a > b.a ? { s, a } : b; }, { s: polys[0], a: -1 }).s;
+      const ring = big.pts.map(([x, y]) => [(x - x0) * kx, y - y0]);
+      const [lx, ly] = polylabel(ring);
+      return [lx / kx + x0, ly + y0];
+    }
+    const line = shapes.find(s => s.type === "line");
+    if (line) return line.pts[Math.floor(line.pts.length / 2)];
+    return [(x0 + x1) / 2, (y0 + y1) / 2];
+  }
+
+  function parseCoords(text) {
+    return text.trim().split(/\s+/).map(t => t.split(",").map(Number)).filter(p => p.length >= 2 && isFinite(p[0]) && isFinite(p[1]));
+  }
+  function loadText(text, name) {
+    const parsed = new DOMParser().parseFromString(text, "application/xml");
+    if (parsed.getElementsByTagName("parsererror").length) { setStatus("That file isn't valid KML. Check it opens in Google Earth."); return; }
+    doc = parsed; hadDecl = /^\s*<\?xml/.test(text); baseName = name.replace(/\.(kml|kmz)$/i, "");
+    items = []; manual = pinned = null; startItem = null;
+    const pms = doc.getElementsByTagNameNS("*", "Placemark");
+    for (const pm of pms) {
+      const shapes = [];
+      for (const poly of pm.getElementsByTagNameNS("*", "Polygon")) {
+        const ob = poly.getElementsByTagNameNS("*", "outerBoundaryIs")[0];
+        const c = ob && ob.getElementsByTagNameNS("*", "coordinates")[0];
+        if (c) shapes.push({ type: "poly", pts: parseCoords(c.textContent) });
+      }
+      for (const ls of pm.getElementsByTagNameNS("*", "LineString")) {
+        const c = ls.getElementsByTagNameNS("*", "coordinates")[0];
+        if (c) shapes.push({ type: "line", pts: parseCoords(c.textContent) });
+      }
+      for (const pt of pm.getElementsByTagNameNS("*", "Point")) {
+        const c = pt.getElementsByTagNameNS("*", "coordinates")[0];
+        if (c) shapes.push({ type: "point", pts: parseCoords(c.textContent) });
+      }
+      const all = shapes.flatMap(s => s.pts);
+      if (!all.length) continue;
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const [x, y] of all) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+      const nameEl = childByLocal(pm, "name");
+      const [lx, ly] = labelPoint(shapes, x0, x1, y0, y1);
+      items.push({ pm, shapes, isPoly: shapes.some(s => s.type === "poly"), cx: lx, cy: ly, w: x1 - x0, h: y1 - y0, old: nameEl ? nameEl.textContent.trim() : "" });
+    }
+    $("fileName").textContent = name;
+    if (!items.length) setStatus("No placemarks with coordinates found in this file.");
+    else setStatus("");
+    update();
+  }
+  async function loadFile(file) {
+    try {
+      if (/\.kmz$/i.test(file.name)) {
+        if (!window.JSZip) { setStatus("KMZ support didn't load. Unzip the KMZ and drop the doc.kml inside it instead."); return; }
+        const zip = await JSZip.loadAsync(file);
+        const entry = Object.values(zip.files).find(f => /\.kml$/i.test(f.name) && !f.dir);
+        if (!entry) { setStatus("No .kml found inside that KMZ."); return; }
+        loadText(await entry.async("string"), file.name);
+      } else {
+        loadText(await file.text(), file.name);
+      }
+      $("sampleTag").hidden = true;
+    } catch (e) { setStatus("Couldn't read that file: " + e.message); }
+  }
+
+  // ---------- ordering ----------
+  function median(a) { if (!a.length) return 0; const s = [...a].sort((p, q) => p - q); return s[Math.floor(s.length / 2)]; }
+  // manual: a full hand-set order (list drag, swap, insert)
+  // pinned: a locked prefix; everything after it is re-run through the method
+  let startItem = null, manual = null, pinned = null, manualList = null, lockedLabel = 0;
+
+  const MODES = {
+    rows:    { hint: "Top row first, reading left to right.", tol: "Row grouping", grid: true },
+    cols:    { hint: "Left column first, reading top to bottom.", tol: "Column grouping", grid: true },
+    snake:   { hint: "Like rows, but every second row runs east to west, so the walk never doubles back.", tol: "Row grouping", grid: true },
+    path:    { hint: "Shortest walking route through every zone. Click a zone on the map to start from it (a gate, the truck, the site office).", start: true },
+    spiral:  { hint: "Winds outward from the middle of the site. Click a zone to make it the centre.", tol: "Spiral spacing", start: true, dir: true },
+    hilbert: { hint: "Follows a space-filling curve, so zones that are near each other get nearby numbers. Good for irregular sites." },
+    radial:  { hint: "Sweeps around the centre like a clock hand, starting at 12 o'clock. Click a zone to move the centre.", start: true, dir: true },
+    area:    { hint: "Biggest zone gets number 1. Handy when numbering doubles as a priority list." }
+  };
+
+  // project to local metres so distances and angles are honest
+  function project(list) {
+    const lat0 = median(list.map(i => i.cy)) * Math.PI / 180;
+    const kx = 111320 * Math.cos(lat0), ky = 110540;
+    list.forEach(i => {
+      i.mx = i.cx * kx; i.my = i.cy * ky; i.mw = i.w * kx; i.mh = i.h * ky;
+      const ring = (i.shapes.find(s => s.type === "poly") || {}).pts || [];
+      let a = 0;
+      for (let k = 0; k < ring.length - 1; k++) a += ring[k][0] * kx * ring[k + 1][1] * ky - ring[k + 1][0] * kx * ring[k][1] * ky;
+      i.area = Math.abs(a / 2);
+    });
+  }
+  const dist = (a, b) => Math.hypot(a.mx - b.mx, a.my - b.my);
+
+  function groupOrder(list, mode, f) {
+    const rowsLike = mode !== "cols";
+    const prim = rowsLike ? i => -i.my : i => i.mx;
+    const sec = rowsLike ? i => i.mx : i => -i.my;
+    const size = rowsLike ? i => i.mh : i => i.mw;
+    let typical = median(list.map(size).filter(v => v > 0));
+    if (!typical) { const ps = list.map(prim); typical = (Math.max(...ps) - Math.min(...ps)) / Math.max(1, Math.sqrt(list.length)); }
+    const tol = f * typical;
+    const groups = [];
+    for (const it of [...list].sort((a, b) => prim(a) - prim(b))) {
+      const g = groups[groups.length - 1];
+      if (g && Math.abs(prim(it) - g.mean) <= tol) { g.items.push(it); g.mean = g.items.reduce((s, x) => s + prim(x), 0) / g.items.length; }
+      else groups.push({ items: [it], mean: prim(it) });
+    }
+    groups.forEach((g, gi) => { g.items.sort((a, b) => sec(a) - sec(b)); if (mode === "snake" && gi % 2) g.items.reverse(); });
+    return groups.map(g => g.items);
+  }
+
+  function smartPath(list, start) {
+    if (list.length < 3) return list.slice();
+    const first = start && list.includes(start) ? start : list.reduce((b, i) => (i.mx - i.my < b.mx - b.my ? i : b)); // default: north-west-most
+    const left = new Set(list); left.delete(first);
+    const route = [first];
+    while (left.size) {
+      const cur = route[route.length - 1]; let best = null, bd = Infinity;
+      for (const c of left) { const d = dist(cur, c); if (d < bd) { bd = d; best = c; } }
+      route.push(best); left.delete(best);
+    }
+    // 2-opt for an open path with a fixed start
+    const n = route.length; let improved = true, passes = 0;
+    while (improved && passes++ < 60) {
+      improved = false;
+      for (let i = 1; i < n - 1; i++) for (let j = i + 1; j < n; j++) {
+        const a = route[i - 1], b = route[i], c = route[j], d = route[j + 1];
+        const before = dist(a, b) + (d ? dist(c, d) : 0), after = dist(a, c) + (d ? dist(b, d) : 0);
+        if (after < before - 1e-6) { let x = i, y = j; while (x < y) { [route[x], route[y]] = [route[y], route[x]]; x++; y--; } improved = true; }
+      }
+    }
+    return route;
+  }
+
+  function centreOf(list, start) {
+    if (start && list.includes(start)) return { x: start.mx, y: start.my };
+    const xs = list.map(i => i.mx), ys = list.map(i => i.my);
+    return { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 };
+  }
+  function bearing(i, c, ccw) { // 0 at north, increasing clockwise
+    let t = Math.atan2(i.mx - c.x, i.my - c.y); if (t < 0) t += 2 * Math.PI;
+    if (ccw && t > 0) t = 2 * Math.PI - t;
+    return t;
+  }
+
+  function hilbertD(x, y, order) {
+    let d = 0;
+    for (let s = order >> 1; s > 0; s >>= 1) {
+      const rx = (x & s) > 0 ? 1 : 0, ry = (y & s) > 0 ? 1 : 0;
+      d += s * s * ((3 * rx) ^ ry);
+      if (ry === 0) { if (rx === 1) { x = s - 1 - x; y = s - 1 - y; } [x, y] = [y, x]; }
+    }
+    return d;
+  }
+
+  function order(list) {
+    const mode = $("mode").value, f = Number($("tol").value) / 100, ccw = $("ccw").checked;
+    project(list);
+    let out = [], rows = null;
+    if (MODES[mode].grid) { rows = groupOrder(list, mode, f); out = rows.flat(); }
+    else if (mode === "path") out = smartPath(list, startItem);
+    else if (mode === "spiral" || mode === "radial") {
+      const c = centreOf(list, startItem);
+      const typical = median(list.map(i => Math.max(i.mw, i.mh)).filter(v => v > 0)) || 1;
+      const rw = Math.max(1, typical * f * 2);
+      const key = i => {
+        const r = Math.hypot(i.mx - c.x, i.my - c.y), t = bearing(i, c, ccw) / (2 * Math.PI);
+        if (mode === "radial") return t + r * 1e-9;
+        if (startItem === i) return -1;
+        return Math.round(r / rw - t) + t; // which turn of the spiral this zone sits on, then how far round
+      };
+      out = [...list].sort((a, b) => key(a) - key(b));
+    }
+    else if (mode === "hilbert") {
+      const xs = list.map(i => i.mx), ys = list.map(i => i.my);
+      const x0 = Math.min(...xs), y1 = Math.max(...ys), span = Math.max(Math.max(...xs) - x0, y1 - Math.min(...ys)) || 1, N = 1024;
+      const key = i => hilbertD(Math.min(N - 1, Math.floor((i.mx - x0) / span * (N - 1))), Math.min(N - 1, Math.floor((y1 - i.my) / span * (N - 1))), N);
+      out = [...list].sort((a, b) => key(a) - key(b));
+    }
+    else if (mode === "area") out = [...list].sort((a, b) => b.area - a.area || b.my - a.my);
+    if ($("reverse").checked) { out.reverse(); if (rows) rows = rows.map(r => r.slice().reverse()).reverse(); }
+    let len = 0; for (let k = 1; k < out.length; k++) len += dist(out[k - 1], out[k]);
+    return { list: out, rows, mode, len };
+  }
+
+  function rowLetter(n) { let s = ""; n++; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
+  function newName(label, it) {
+    let s = $("prefix").value + label + $("suffix").value;
+    if ($("keepOld").checked && it.old) s += " " + it.old;
+    return s;
+  }
+  function labels(res) {
+    const pad = Math.max(1, Math.min(6, parseInt($("pad").value, 10) || 1));
+    const st = parseInt($("start").value, 10), s0 = isFinite(st) ? st : 1;
+    const num = n => String(n).padStart(pad, "0");
+    if ($("style").value === "grid" && res.rows) {
+      const map = new Map();
+      res.rows.forEach((r, ri) => r.forEach((it, k) => map.set(it, rowLetter(ri) + num(s0 + k))));
+      return res.list.map(it => map.get(it));
+    }
+    return res.list.map((_, k) => num(s0 + k));
+  }
+
+  // ---------- render ----------
+  function update() {
+    if (!doc) return;
+    const target = $("polyOnly").checked ? items.filter(i => i.isPoly) : items;
+    const mode = $("mode").value, M = MODES[mode];
+    if (startItem && !target.includes(startItem)) startItem = null;
+    const res = target.length ? order(target) : { list: [], rows: null, mode, len: 0 };
+    // a hand-adjusted order wins as long as it still covers exactly the same zones
+    if (manual && (manual.length !== res.list.length || !manual.every(i => res.list.includes(i)))) manual = pinned = null;
+    if (pinned && !pinned.every(i => res.list.includes(i))) pinned = null;
+    let lockedCount = 0;
+    if (pinned && pinned.length) {
+      const pinSet = new Set(pinned), last = pinned[pinned.length - 1];
+      const rest = res.list.filter(i => !pinSet.has(i));
+      const tail = mode === "path" && rest.length ? smartPath([last, ...rest], last).slice(1) : rest;
+      manualList = [...pinned, ...tail]; lockedCount = pinned.length;
+    } else manualList = manual;
+    if (manualList) {
+      const manual = manualList;
+      res.list = manual.slice();
+      if (res.rows) res.rows = res.rows.map(r => r.slice().sort((a, b) => manual.indexOf(a) - manual.indexOf(b)));
+      res.len = 0; for (let k = 1; k < res.list.length; k++) res.len += dist(res.list[k - 1], res.list[k]);
+    }
+    $("manualTag").hidden = !manualList;
+    lockedLabel = lockedCount;
+    $("manualText").textContent = lockedCount ? `Locked 1–${lockedCount}, rest recalculated` : "Hand-adjusted";
+    const labs = labels(res);
+    ordered = res.list.map((it, k) => ({ it, label: labs[k], name: newName(labs[k], it) }));
+    $("tolVal").textContent = $("tol").value + "%";
+    $("modeHint").textContent = M.hint;
+    $("tolField").hidden = !M.tol; if (M.tol) $("tolLabel").textContent = M.tol;
+    $("cwField").hidden = !M.dir;
+    $("startBox").hidden = !M.start;
+    $("styleField").hidden = !M.grid;
+    $("startText").textContent = startItem ? "Start: " + (startItem.old || "unnamed zone") : (mode === "path" ? "Start: north-west corner (auto)" : "Centre: middle of site (auto)");
+    const len = res.len >= 1000 ? (res.len / 1000).toFixed(2) + " km" : Math.round(res.len) + " m";
+    const parts = [`${ordered.length} to number`];
+    if (res.rows) parts.push(`${res.rows.length} ${mode === "cols" ? "columns" : "rows"}`);
+    parts.push(`walk ${len}`);
+    if (items.length - ordered.length) parts.push(`${items.length - ordered.length} left as is`);
+    $("stats").textContent = parts.join(" · ");
+    drawMap(); drawTable();
+    $("saveBtn").disabled = $("copyBtn").disabled = $("xlsxBtn").disabled = !ordered.length;
+  }
+
+  function drawTable() {
+    const tb = $("rows"); tb.textContent = "";
+    ordered.forEach((o, k) => {
+      const tr = document.createElement("tr");
+      tr.dataset.k = k; tr.dataset.idx = items.indexOf(o.it);
+      const g = document.createElement("td"); g.className = "grip";
+      const h = document.createElement("button"); h.type = "button"; h.className = "handle"; h.textContent = "⠿";
+      h.setAttribute("aria-label", `Move ${o.name}. Use arrow keys.`);
+      g.appendChild(h); tr.appendChild(g);
+      [[o.label, "num"], [o.name, "new"], [o.it.old || "(no name)", "old"]].forEach(([t, c]) => { const td = document.createElement("td"); td.className = c; td.textContent = t; tr.appendChild(td); });
+      tb.appendChild(tr);
+    });
+  }
+
+  // ---------- drag to reorder ----------
+  function highlight(idx) {
+    $("map").querySelectorAll(".hl").forEach(e => e.classList.remove("hl"));
+    if (idx == null) return;
+    $("map").querySelectorAll(`[data-idx="${idx}"]`).forEach(e => e.classList.add("hl"));
+  }
+  function commitOrder(ks, focusK) {
+    manual = ks.map(k => ordered[k].it); pinned = null;
+    update();
+    if (focusK != null) { const btn = $("rows").children[focusK]?.querySelector(".handle"); if (btn) btn.focus(); }
+  }
+  let drag = null;
+  $("rows").addEventListener("pointerdown", e => {
+    const h = e.target.closest(".handle"); if (!h || e.button > 0) return;
+    e.preventDefault();
+    const tr = h.closest("tr");
+    drag = { tr, id: e.pointerId, moved: false };
+    h.setPointerCapture(e.pointerId);
+    tr.classList.add("dragging"); document.body.classList.add("is-dragging");
+    highlight(tr.dataset.idx);
+  });
+  $("rows").addEventListener("pointermove", e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const tb = $("rows"), wrap = $("tableWrap");
+    const wr = wrap.getBoundingClientRect();
+    if (e.clientY < wr.top + 30) wrap.scrollTop -= 12; else if (e.clientY > wr.bottom - 30) wrap.scrollTop += 12;
+    for (const row of tb.children) {
+      if (row === drag.tr) continue;
+      const r = row.getBoundingClientRect();
+      if (e.clientY > r.top && e.clientY < r.bottom) {
+        const after = e.clientY > r.top + r.height / 2;
+        const ref = after ? row.nextSibling : row;
+        if (ref !== drag.tr && ref !== drag.tr.nextSibling) { tb.insertBefore(drag.tr, ref); drag.moved = true; }
+        break;
+      }
+    }
+  });
+  function endDrag(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag; drag = null;
+    d.tr.classList.remove("dragging"); document.body.classList.remove("is-dragging");
+    highlight(null);
+    if (d.moved) commitOrder([...$("rows").children].map(r => Number(r.dataset.k)));
+  }
+  $("rows").addEventListener("pointerup", endDrag);
+  $("rows").addEventListener("pointercancel", endDrag);
+  $("rows").addEventListener("keydown", e => {
+    const h = e.target.closest(".handle"); if (!h) return;
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    const k = Number(h.closest("tr").dataset.k), to = e.key === "ArrowUp" ? k - 1 : k + 1;
+    if (to < 0 || to >= ordered.length) return;
+    const ks = ordered.map((_, i) => i); [ks[k], ks[to]] = [ks[to], ks[k]];
+    commitOrder(ks, to);
+  });
+  $("rows").addEventListener("mouseover", e => { if (!drag) { const tr = e.target.closest("tr"); highlight(tr ? tr.dataset.idx : null); } });
+  $("rows").addEventListener("mouseleave", () => { if (!drag) highlight(null); });
+  $("rows").addEventListener("focusin", e => { const tr = e.target.closest("tr"); if (tr) highlight(tr.dataset.idx); });
+  $("rows").addEventListener("focusout", () => { if (!drag) highlight(null); });
+
+  function drawMap() {
+    const svg = $("map"); svg.textContent = ""; tagPos = [];
+    if (!items.length) return;
+    // Web Mercator (0..1 world units) so the zones line up with standard map tiles
+    const mx = lon => (lon + 180) / 360;
+    const my = lat => { const s = Math.sin(Math.max(-85, Math.min(85, lat)) * Math.PI / 180); return 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI); };
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    items.forEach(i => i.shapes.forEach(s => s.pts.forEach(([lon, lat]) => { const X = mx(lon), Y = my(lat); x0 = Math.min(x0, X); x1 = Math.max(x1, X); y0 = Math.min(y0, Y); y1 = Math.max(y1, Y); })));
+    const box = svg.getBoundingClientRect();
+    // drawing width follows the screen a little, so numbers stay readable on a phone
+    const W = box.width > 50 ? Math.max(560, Math.min(1000, Math.round(box.width * 1.1))) : 1000, pad = 40;
+    const spanX = Math.max(x1 - x0, 1e-12), spanY = Math.max(y1 - y0, 1e-12);
+    const H = box.width > 50 && box.height > 50
+      ? Math.round(W * box.height / box.width)
+      : Math.max(240, Math.min(900, spanY * ((W - 2 * pad) / Math.max(spanX, spanY)) + 2 * pad));
+    const sc = Math.min((W - 2 * pad) / spanX, (H - 2 * pad) / spanY);
+    const ox = (W - spanX * sc) / 2, oy = (H - spanY * sc) / 2;
+    const P = (lon, lat) => [ox + (mx(lon) - x0) * sc, oy + (my(lat) - y0) * sc];
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const mk = (tag, attrs) => { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+    // base map tiles
+    const bm = $("basemap").value, src = BASEMAPS[bm];
+    svg.classList.toggle("sat", bm === "sat");
+    $("attrib").textContent = src ? src.attrib : "";
+    if (src) {
+      // pick the zoom where one tile draws at roughly 256 units or larger, so it stays sharp
+      const z = Math.max(1, Math.min(src.max, Math.ceil(Math.log2(sc / 256))));
+      const n = 2 ** z, ts = sc / n;
+      const wx0 = x0 - ox / sc, wx1 = x0 + (W - ox) / sc, wy0 = y0 - oy / sc, wy1 = y0 + (H - oy) / sc;
+      const dark = document.documentElement.dataset.theme === "dark" || (document.documentElement.dataset.theme !== "light" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+      // OSM has no dark style, so the street tiles are darkened with a filter in dark mode
+      const tg = mk("g", { class: dark && bm === "streets" ? "tiles dark" : "tiles", "pointer-events": "none" });
+      for (let tx = Math.floor(wx0 * n); tx <= Math.floor(wx1 * n); tx++) for (let ty = Math.floor(wy0 * n); ty <= Math.floor(wy1 * n); ty++) {
+        if (ty < 0 || ty >= n) continue;
+        const url = src.url(z, ((tx % n) + n) % n, ty, dark);
+        const im = mk("image", { x: (ox + (tx / n - x0) * sc).toFixed(2), y: (oy + (ty / n - y0) * sc).toFixed(2), width: (ts + 0.6).toFixed(2), height: (ts + 0.6).toFixed(2), preserveAspectRatio: "none" });
+        im.setAttribute("href", url);
+        im.addEventListener("error", () => { tileErrors++; if (tileErrors === 3) $("attrib").textContent = "Base map can't load here. It works when the tool is opened from GitHub Pages or as a file."; }, { once: true });
+        tg.appendChild(im);
+      }
+      svg.appendChild(tg);
+      svg.appendChild(mk("rect", { x: 0, y: 0, width: W, height: H, class: "veil", "pointer-events": "none" }));
+    }
+    const numbered = new Set(ordered.map(o => o.it));
+    items.forEach((it, idx) => {
+      const on = numbered.has(it);
+      for (const s of it.shapes) {
+        const pts = s.pts.map(p => P(p[0], p[1]).map(v => v.toFixed(1)).join(",")).join(" ");
+        let el;
+        if (s.type === "poly") el = mk("polygon", { points: pts, fill: on ? "var(--zone)" : "var(--skip)", stroke: on ? "var(--zone-edge)" : "var(--skip-edge)", "stroke-width": 1.5 });
+        else if (s.type === "line") el = mk("polyline", { points: pts, fill: "none", stroke: on ? "var(--zone-edge)" : "var(--skip-edge)", "stroke-width": 2 });
+        else { const [x, y] = P(s.pts[0][0], s.pts[0][1]); el = mk("circle", { cx: x, cy: y, r: 6, fill: on ? "var(--zone-edge)" : "var(--skip-edge)", class: "hit" }); }
+        el.dataset.idx = idx; svg.appendChild(el);
+      }
+    });
+    if (ordered.length > 1) {
+      const pts = ordered.map(o => P(o.it.cx, o.it.cy).map(v => v.toFixed(1)).join(",")).join(" ");
+      svg.appendChild(mk("polyline", { points: pts, fill: "none", stroke: "var(--path)", "stroke-width": 2, "stroke-dasharray": "6 5", "stroke-linejoin": "round", opacity: .85 }));
+    }
+    const fs = ordered.length > 80 ? 11 : ordered.length > 30 ? 13 : 16;
+    if (MODES[$("mode").value].start && ordered.length) {
+      const s = startItem && numbered.has(startItem) ? startItem : ($("mode").value === "path" ? ordered[0].it : null);
+      if (s) { const [x, y] = P(s.cx, s.cy); svg.appendChild(mk("circle", { cx: x, cy: y, r: fs * 1.6, fill: "none", stroke: "var(--path)", "stroke-width": 3, "pointer-events": "none" })); }
+    }
+    ordered.forEach((o, k) => {
+      const [x, y] = P(o.it.cx, o.it.cy);
+      const label = o.label;
+      const wTag = fs * 0.62 * label.length + 10;
+      const g = mk("g", { class: k < lockedLabel ? "tag locked" : "tag", "data-k": k, "data-idx": items.indexOf(o.it) });
+      g.appendChild(mk("rect", { x: x - wTag / 2, y: y - fs * 0.8, width: wTag, height: fs * 1.6, rx: 3, fill: "var(--tag)" }));
+      const t = mk("text", { x, y: y + fs * 0.36, "text-anchor": "middle", "font-size": fs, fill: "var(--tag-ink)", "pointer-events": "none" });
+      t.textContent = label; g.appendChild(t);
+      const ti = mk("title", {}); ti.textContent = `${o.name}${k < lockedLabel ? " (locked)" : ""} · drag onto another zone to ${{ swap: "swap numbers", insert: "move it there", relock: "take its number" }[$("dropMode").value]}`; g.appendChild(ti);
+      svg.appendChild(g);
+      tagPos[k] = [x, y];
+    });
+    mapFs = fs;
+  }
+  let tagPos = [], mapFs = 16, tileErrors = 0;
+  const BASEMAPS = {
+    // OpenStreetMap's own tiles: no API key needed (attribution required)
+    streets: { max: 19, attrib: "© OpenStreetMap contributors",
+      url: (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png` },
+    sat: { max: 19, attrib: "Imagery © Esri, Maxar, Earthstar Geographics",
+      url: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}` }
+  };
+
+  // ---------- output ----------
+  function buildKml() {
+    for (const o of ordered) {
+      let n = childByLocal(o.it.pm, "name");
+      if (!n) { n = doc.createElementNS(o.it.pm.namespaceURI || KMLNS, "name"); o.it.pm.insertBefore(n, o.it.pm.firstChild); }
+      n.textContent = o.name;
+    }
+    let out = new XMLSerializer().serializeToString(doc);
+    // restore originals in the live doc so further tweaks start clean
+    for (const o of ordered) { const n = childByLocal(o.it.pm, "name"); if (n) n.textContent = o.it.old; }
+    if (hadDecl && !/^<\?xml/.test(out)) out = '<?xml version="1.0" encoding="UTF-8"?>\n' + out;
+    return out;
+  }
+  function setStatus(t) { $("status").textContent = t; }
+
+  $("saveBtn").addEventListener("click", async () => {
+    const text = buildKml();
+    const inViewer = !!(window.claude && window.claude.use);
+    if (!inViewer) {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([text], { type: "application/vnd.google-earth.kml+xml" }));
+      a.download = baseName + "-numbered.kml"; document.body.appendChild(a); a.click(); a.remove();
+      setStatus("Saved " + baseName + "-numbered.kml"); return;
+    }
+    const dl = await window.claude.use("downloads");
+    if (!dl) { setStatus("Downloads aren't available here. Use Copy KML text and paste it into a new .kml file."); return; }
+    try {
+      await dl.save({ filename: baseName + "-numbered.kml.txt", data: text });
+      setStatus("Saved. Remove the .txt from the end of the filename so it opens as KML.");
+    } catch (e) {
+      if (e && e.code === "declined") setStatus("Download cancelled.");
+      else if (e && e.code === "rate_limited") setStatus("A save prompt is already open.");
+      else setStatus("Couldn't save here. Use Copy KML text instead.");
+    }
+  });
+  async function saveFile(filename, data, mime) {
+    const inViewer = !!(window.claude && window.claude.use);
+    if (!inViewer) {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([data], { type: mime }));
+      a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+      return "saved";
+    }
+    const dl = await window.claude.use("downloads");
+    if (!dl) return "unavailable";
+    try { await dl.save({ filename, data }); return "saved"; }
+    catch (e) { return e && e.code === "declined" ? "declined" : e && e.code === "rate_limited" ? "busy" : "unavailable"; }
+  }
+  $("xlsxBtn").addEventListener("click", async () => {
+    if (!window.XLSX) { setStatus("The Excel export didn't load. Check your connection and reload."); return; }
+    const rows = ordered.map((o, k) => ({
+      "Order": k + 1,
+      "New name": o.name,
+      "Old name": o.it.old || "",
+      "Latitude": Number(o.it.cy.toFixed(6)),
+      "Longitude": Number(o.it.cx.toFixed(6))
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows, { header: ["Order", "New name", "Old name", "Latitude", "Longitude"] });
+    ws["!cols"] = [{ wch: 7 }, { wch: Math.max(12, ...rows.map(r => r["New name"].length + 2)) }, { wch: Math.max(12, ...rows.map(r => r["Old name"].length + 2)) }, { wch: 12 }, { wch: 12 }];
+    ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: 4 } }) };
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Renamed zones");
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const r = await saveFile(baseName + "-names.xlsx", buf, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    setStatus({ saved: "Saved " + baseName + "-names.xlsx", declined: "Download cancelled.", busy: "A save prompt is already open." }[r] || "Couldn't save the spreadsheet here.");
+  });
+  $("basemap").addEventListener("input", () => { tileErrors = 0; drawMap(); });
+  try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawMap); } catch (_) {}
+
+  $("copyBtn").addEventListener("click", async () => {
+    const text = buildKml();
+    try { await navigator.clipboard.writeText(text); setStatus("KML copied. Paste it into a new file ending in .kml."); }
+    catch (e) {
+      const ta = document.createElement("textarea"); ta.value = text; ta.style.cssText = "position:fixed;opacity:0"; document.body.appendChild(ta); ta.select();
+      let ok = false; try { ok = document.execCommand("copy"); } catch (_) {}
+      ta.remove(); setStatus(ok ? "KML copied. Paste it into a new file ending in .kml." : "Your browser blocked copying.");
+    }
+  });
+
+  // ---------- inputs ----------
+  // changing how the order is worked out drops hand edits; changing names keeps them
+  ["mode", "tol", "ccw", "reverse", "polyOnly"].forEach(id => $(id).addEventListener("input", () => { manual = pinned = null; update(); }));
+  ["style", "prefix", "suffix", "start", "pad", "keepOld"].forEach(id => $(id).addEventListener("input", update));
+  $("dropMode").addEventListener("input", drawMap);
+  $("resetManual").addEventListener("click", () => { manual = pinned = null; update(); });
+  // ---------- drag number tags on the map ----------
+  let mdrag = null, swallowClick = false;
+  function svgPoint(e) {
+    const svg = $("map"), m = svg.getScreenCTM();
+    if (!m) return [0, 0];
+    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+    return [p.x, p.y];
+  }
+  function dropTargetAt(e, from) {
+    // zone directly under the pointer first, then the nearest number tag within reach
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const hit = el && el.closest && el.closest("[data-idx]");
+    if (hit && $("map").contains(hit)) {
+      const k = ordered.findIndex(o => items.indexOf(o.it) === Number(hit.dataset.idx));
+      if (k >= 0 && k !== from) return k;
+    }
+    const [x, y] = svgPoint(e); let best = -1, bd = Math.max(30, mapFs * 2.2);
+    tagPos.forEach(([tx, ty], k) => { if (k === from) return; const d = Math.hypot(tx - x, ty - y); if (d < bd) { bd = d; best = k; } });
+    return best;
+  }
+  function markTarget(k) {
+    $("map").querySelectorAll(".drop-target").forEach(e => e.classList.remove("drop-target"));
+    if (k < 0) return;
+    const idx = items.indexOf(ordered[k].it);
+    $("map").querySelectorAll(`polygon[data-idx="${idx}"], polyline[data-idx="${idx}"], circle[data-idx="${idx}"]`).forEach(e => e.classList.add("drop-target"));
+  }
+  $("map").addEventListener("pointerdown", e => {
+    const tag = e.target.closest(".tag"); if (!tag || e.button > 0) return;
+    e.preventDefault();
+    const k = Number(tag.dataset.k);
+    tag.setPointerCapture(e.pointerId);
+    const ghost = tag.cloneNode(true); ghost.classList.remove("tag"); ghost.classList.add("ghost");
+    ghost.querySelector("title")?.remove();
+    $("map").appendChild(ghost);
+    const [x0, y0] = svgPoint(e);
+    mdrag = { k, tag, ghost, id: e.pointerId, x0, y0, moved: false, target: -1 };
+    document.body.classList.add("is-dragging");
+  });
+  $("map").addEventListener("pointermove", e => {
+    if (!mdrag || e.pointerId !== mdrag.id) return;
+    const [x, y] = svgPoint(e), dx = x - mdrag.x0, dy = y - mdrag.y0;
+    if (!mdrag.moved && Math.hypot(dx, dy) < 4) return;
+    mdrag.moved = true; mdrag.tag.classList.add("lifted");
+    mdrag.ghost.setAttribute("transform", `translate(${dx} ${dy})`);
+    mdrag.target = dropTargetAt(e, mdrag.k);
+    markTarget(mdrag.target);
+    const t = mdrag.target;
+    const dm = $("dropMode").value;
+    setStatus(t < 0 ? "Drop on another zone"
+      : dm === "swap" ? `Drop to swap ${ordered[mdrag.k].label} and ${ordered[t].label}`
+      : dm === "insert" ? `Drop to make this number ${ordered[t].label} and shift the ones between`
+      : `Drop to swap ${ordered[mdrag.k].label} and ${ordered[t].label}, then recalculate after ${ordered[Math.min(mdrag.k, t)].label}`);
+  });
+  function endMapDrag(e) {
+    if (!mdrag || e.pointerId !== mdrag.id) return;
+    const d = mdrag; mdrag = null;
+    document.body.classList.remove("is-dragging");
+    d.ghost.remove(); d.tag.classList.remove("lifted"); markTarget(-1);
+    if (!d.moved) return; // a plain click falls through to the click handler
+    swallowClick = true; setTimeout(() => { swallowClick = false; }, 0);
+    setStatus("");
+    if (e.type === "pointerup" && d.target >= 0 && d.target !== d.k) {
+      const ks = ordered.map((_, i) => i);
+      const dm = $("dropMode").value;
+      if (dm === "relock") {
+        // the two zones trade places, then lock up to the lower of the two numbers
+        // and let the method recalculate everything after it (same either direction)
+        const list = ordered.map(o => o.it);
+        [list[d.k], list[d.target]] = [list[d.target], list[d.k]];
+        pinned = list.slice(0, Math.min(d.k, d.target) + 1); manual = null;
+        update(); return;
+      }
+      if (dm === "swap") [ks[d.k], ks[d.target]] = [ks[d.target], ks[d.k]];
+      else { ks.splice(d.k, 1); ks.splice(d.target, 0, d.k); }
+      commitOrder(ks);
+    }
+  }
+  $("map").addEventListener("pointerup", endMapDrag);
+  $("map").addEventListener("pointercancel", endMapDrag);
+
+  $("map").addEventListener("click", e => {
+    if (swallowClick) return;
+    const hit = e.target.closest && e.target.closest("[data-idx]");
+    const idx = hit && hit.dataset.idx; if (idx === undefined || idx === null) return;
+    if (!MODES[$("mode").value].start) return;
+    const it = items[Number(idx)];
+    if (!ordered.some(o => o.it === it)) return;
+    startItem = startItem === it ? null : it; manual = pinned = null; update();
+  });
+  $("clearStart").addEventListener("click", () => { startItem = null; manual = pinned = null; update(); });
+  const drop = $("drop"), fi = $("fileInput");
+  drop.addEventListener("click", () => fi.click());
+  drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fi.click(); } });
+  fi.addEventListener("change", () => { if (fi.files[0]) loadFile(fi.files[0]); fi.value = ""; });
+  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
+
+  loadText(sampleKml(), "sample-event-site.kml");
+  // redraw when the stage changes size or the theme switches
+  let rsT; new ResizeObserver(() => { clearTimeout(rsT); rsT = setTimeout(() => { if (!drag) drawMap(); }, 120); }).observe($("map").parentElement);
+  window.addEventListener("kit:theme", drawMap);
+})();
+</script>
+</body>
+</html>

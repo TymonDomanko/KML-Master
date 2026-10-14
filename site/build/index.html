@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{var t=localStorage.getItem("kmlm-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<title>Build zones · KML Master</title>
+<meta name="description" content="Build KML zones from suburbs and postcodes: official data for Australia, the US, Canada and New Zealand, OpenStreetMap elsewhere. No API keys.">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="style.css?v=dev">
+<link rel="stylesheet" href="../kit/kit.css?v=dev">
+</head>
+<body class="kit" data-tool="build">
+<header class="kit-bar" id="kitBar"></header>
+<script src="../kit/kit.js?v=dev"></script>
+
+<div class="kit-app">
+  <aside id="panel" class="kit-panel" aria-label="Zones">
+    <div class="kit-scroll">
+    <div class="kit-intro">
+      <h1>Build zones</h1>
+      <p>Pick suburbs or postcodes on the map, group them into zones, then download them as KML.</p>
+    </div>
+
+    <section class="block">
+      <label class="field">Country
+        <select id="country"></select>
+      </label>
+      <div id="auControls" class="row">
+        <div class="seg" role="group" aria-label="Boundaries shown on the map">
+          <button type="button" data-ds="sal" class="on">Suburbs</button>
+          <button type="button" data-ds="poa">Postcodes</button>
+        </div>
+        <select id="region" aria-label="State or territory"></select>
+      </div>
+      <div id="osmControls" hidden>
+        <div class="row">
+          <select id="osmType" aria-label="Boundary type" disabled><option>Press “Show boundaries here”</option></select>
+          <button type="button" id="osmScan" class="btn">Show boundaries here</button>
+        </div>
+        <p class="hint" id="osmStatus">Boundaries come from OpenStreetMap. Zoom the map to the area you want, then press “Show boundaries here”. What's available varies by country.</p>
+      </div>
+      <div class="search">
+        <input id="search" type="search" placeholder="Search a suburb or postcode to add" autocomplete="off">
+        <ul id="results" hidden></ul>
+      </div>
+      <p class="hint">Click areas on the map to add or remove them from the selected zone.</p>
+    </section>
+
+    <section class="block">
+      <div class="row between">
+        <h2>Zones</h2>
+        <button type="button" id="addZone" class="btn small">New zone</button>
+      </div>
+      <div id="zones"></div>
+    </section>
+
+    <section class="block">
+      <h2>Download</h2>
+      <label class="field">File name
+        <input id="fileName" type="text" value="zones">
+      </label>
+      <label class="check"><input id="folders" type="checkbox" checked> Put each zone in its own folder</label>
+      <label class="check"><input id="stripState" type="checkbox" checked> Drop the state from suburb names, e.g. “Epping (NSW)” becomes “Epping”</label>
+    </section>
+
+    <footer>
+      Official boundaries: Australia – <a href="https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs-edition-3/jul2021-jun2026/access-and-downloads/digital-boundary-files" target="_blank" rel="noopener">ABS</a> (CC BY 4.0);
+      United States – <a href="https://www.census.gov/geographies/mapping-files/time-series/geo/cartographic-boundary.html" target="_blank" rel="noopener">US Census Bureau</a>;
+      Canada – <a href="https://www12.statcan.gc.ca/census-recensement/2021/geo/sip-pis/boundary-limites/index2021-eng.cfm?year=21" target="_blank" rel="noopener">Statistics Canada</a> (Open Government Licence – Canada);
+      New Zealand – <a href="https://services.arcgis.com/xdsHIIxuCWByZiCB/ArcGIS/rest/services/LINZ_NZ_Suburbs_and_Localities/FeatureServer" target="_blank" rel="noopener">LINZ</a> (CC BY 4.0).
+      Postcode areas are statistical approximations of real postcodes.
+      Other countries: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> (ODbL), via Overpass and Nominatim.
+      Map © OpenStreetMap contributors.
+      <span id="built"></span>
+    </footer>
+    </div>
+
+    <div class="kit-actions">
+      <button type="button" id="download" class="btn primary">Download KML (all zones)</button>
+      <div class="kit-btns">
+        <button type="button" id="saveProject" class="btn small">Save project</button>
+        <label class="btn small">Open project<input id="openProject" type="file" accept=".json,application/json" hidden></label>
+      </div>
+    </div>
+  </aside>
+
+  <main class="kit-stage"><div id="map" class="kit-darkable"></div></main>
+</div>
+<div id="toast" class="kit-toast" hidden></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@7.4.0/turf.min.js" defer></script>
+  <script src="core.js?v=dev"></script>
+  <script src="app.js?v=dev" defer></script>
+</body>
+</html>

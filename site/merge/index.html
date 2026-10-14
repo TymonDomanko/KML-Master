@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{var t=localStorage.getItem("kmlm-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<title>Merge zones · KML Master</title>
+<meta name="description" content="Merge every polygon zone in a KML or KMZ file into one outline, right in your browser.">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>
+/* Merge: tool-specific styles. Shared look comes from ../kit/kit.css */
+.field { display: flex; flex-direction: column; gap: 7px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.zhead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.zonelist { max-height: 240px; overflow-y: auto; border: 1px solid var(--kit-line); border-radius: 6px; background: var(--kit-paper); }
+.zrow { display: flex; align-items: center; gap: 9px; padding: 6px 8px 6px 10px; font-size: 13.5px; cursor: pointer; border-bottom: 1px solid var(--kit-line); }
+.zrow:last-child { border-bottom: 0; }
+.zrow:hover { background: var(--kit-sunken); }
+.zrow input { flex: none; }
+.zrow span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.zrow.off span { color: var(--kit-muted); text-decoration: line-through; }
+.zoomto { font: 600 12px/1 var(--kit-sans); padding: 5px 8px; border-radius: 5px; flex: none; border: 1px solid var(--kit-line); background: var(--kit-surface); color: var(--kit-ink); cursor: pointer; }
+.zoomto:hover { border-color: var(--kit-muted); }
+.zbtns .btn { flex: 1 1 auto; }
+#map { position: absolute; inset: 0; background: var(--kit-stage); z-index: 0; }
+.leaflet-container a.leaflet-popup-close-button { color: #333; }
+.sw.z { background: var(--kit-zone-fill); border: 1px dashed var(--kit-zone); }
+.sw.m { border: 2.5px solid var(--kit-signal); }
+.sw.x { border: 1.5px dotted var(--kit-muted); }
+.readout-card { display: grid; }
+.readout-card .kit-legend { padding: 8px 16px; border-top: 1px solid var(--kit-line); }
+@media (max-width: 860px) {
+  .kit-stage { display: flex; flex-direction: column; }
+  #map { position: relative; inset: auto; height: 60vh; }
+  .kit-float.bl { position: static; margin: 0; border-radius: 0; box-shadow: none; border-width: 1px 0 0; }
+  .kit-readout { grid-auto-flow: row; grid-template-columns: 1fr 1fr; }
+  .kit-readout > div:nth-child(3) { border-left: 0; }
+  .kit-readout > div:nth-child(n+3) { border-top: 1px solid var(--kit-line); }
+}
+</style>
+<link rel="stylesheet" href="../kit/kit.css?v=dev">
+</head>
+<body class="kit" data-tool="merge">
+<header class="kit-bar" id="kitBar"></header>
+<script src="../kit/kit.js?v=dev"></script>
+
+<div class="kit-app">
+  <aside class="kit-panel" aria-label="Settings">
+    <div class="kit-scroll">
+      <div class="kit-intro">
+        <h1>Merge zones</h1>
+        <p>Join the zones in a KML or KMZ into one outline for Google Earth or My Maps. Your file stays in your browser.</p>
+      </div>
+
+      <label class="drop" id="drop" tabindex="0">
+        <strong>Open KML or KMZ</strong>
+        <span>Click to choose a file, or drop it here.</span>
+        <span class="filename" id="fname">Example zones loaded</span>
+        <input type="file" id="file" data-kit-kml accept=".kml,.kmz,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz" hidden>
+      </label>
+
+      <div class="field">
+        <div class="zhead"><span class="label">Zones to merge</span><span class="hint" id="zonecount"></span></div>
+        <input type="search" id="zfilter" placeholder="Search zones" aria-label="Search zones">
+        <div class="zonelist" id="zonelist"></div>
+        <div class="row zbtns">
+          <button type="button" class="btn small" id="zall">Include all</button>
+          <button type="button" class="btn small" id="znone">Exclude all</button>
+        </div>
+        <p class="hint">Untick a zone, or click it on the map, to leave it out. While searching, these buttons only change the zones shown.</p>
+      </div>
+
+      <div class="field">
+        <label class="label" for="gap">Close gaps up to (metres)</label>
+        <input type="number" id="gap" min="0" step="1" value="0">
+        <p class="hint">Zones that don't quite touch stay separate. Set this to bridge small gaps between neighbours, e.g. 5 m. 0 merges only zones that touch.</p>
+      </div>
+
+      <div class="field">
+        <label class="check"><input type="checkbox" id="holes" checked> Fill in holes inside the merged area</label>
+        <label class="check"><input type="checkbox" id="keep"> Keep the original zones in the output file</label>
+      </div>
+
+      <div class="field">
+        <span class="label">Outline style</span>
+        <div class="row">
+          <input type="color" id="color" value="#e2580b" aria-label="Outline colour">
+          <input type="number" id="width" min="1" max="10" step="1" value="3" aria-label="Line width" style="width:76px">
+          <label class="check" style="margin:0"><input type="checkbox" id="fill"> Light fill</label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="label" for="outname">File name</label>
+        <input type="text" id="outname" value="merged-zone">
+      </div>
+    </div>
+
+    <div class="kit-actions">
+      <button type="button" class="btn primary" id="savekml">Download KML</button>
+      <div class="kit-btns">
+        <button type="button" class="btn small" id="savezip">KMZ</button>
+        <button type="button" class="btn small" id="savejson">GeoJSON</button>
+        <button type="button" class="btn small" id="copy">Copy KML</button>
+      </div>
+      <p class="status" id="status" role="status"></p>
+    </div>
+  </aside>
+
+  <main class="kit-stage" aria-label="Preview">
+    <div id="map" role="img" aria-label="Map of the zones and merged outline"></div>
+    <div class="kit-float bl readout-card">
+      <div class="kit-readout">
+        <div><span>Zones in</span><b id="sIn">–</b></div>
+        <div><span>Outlines out</span><b id="sOut">–</b></div>
+        <div><span>Area</span><b id="sArea">–</b></div>
+        <div><span>Perimeter</span><b id="sPer">–</b></div>
+      </div>
+      <div class="kit-legend">
+        <span><i class="sw z"></i>Zones</span>
+        <span><i class="sw x"></i>Left out</span>
+        <span><i class="sw m"></i>Merged outline</span>
+        <span class="kit-tag sample" id="badge">Example</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const SAMPLE = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Example zones</name>
+<Placemark><name>Zone A</name><Polygon><outerBoundaryIs><LinearRing><coordinates>151.2040,-33.8700 151.2110,-33.8700 151.2110,-33.8650 151.2040,-33.8650 151.2040,-33.8700</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+<Placemark><name>Zone B</name><Polygon><outerBoundaryIs><LinearRing><coordinates>151.2095,-33.8680 151.2170,-33.8680 151.2170,-33.8620 151.2120,-33.8605 151.2095,-33.8640 151.2095,-33.8680</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+<Placemark><name>Zone C</name><Polygon><outerBoundaryIs><LinearRing><coordinates>151.2060,-33.8735 151.2135,-33.8735 151.2135,-33.8697 151.2060,-33.8697 151.2060,-33.8735</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+<Placemark><name>Zone D</name><Polygon><outerBoundaryIs><LinearRing><coordinates>151.2172,-33.8720 151.2205,-33.8720 151.2205,-33.8685 151.2172,-33.8685 151.2172,-33.8720</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+</Document></kml>`;
+
+let zones = [];      // array of turf Polygon features
+let merged = null;   // turf Polygon/MultiPolygon feature
+let kmlOut = "";
+let isExample = true;
+
+function setStatus(msg, err) { const s = $("status"); s.textContent = msg; s.classList.toggle("err", !!err); }
+
+function parseCoords(text) {
+  return text.trim().split(/\s+/).map(t => t.split(",").map(Number)).filter(p => p.length >= 2 && isFinite(p[0]) && isFinite(p[1])).map(p => [p[0], p[1]]);
+}
+function closeRing(r) {
+  if (r.length && (r[0][0] !== r[r.length-1][0] || r[0][1] !== r[r.length-1][1])) r.push([...r[0]]);
+  return r;
+}
+function byTag(el, tag) { return Array.from(el.getElementsByTagNameNS("*", tag)); }
+
+function parseKML(text) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length) throw new Error("That file isn't valid KML.");
+  const out = [];
+  byTag(doc, "Polygon").forEach(poly => {
+    const pm = poly.closest ? poly.closest("Placemark") : null;
+    const name = pm ? (byTag(pm, "name")[0]?.textContent || "") : "";
+    const outer = byTag(poly, "outerBoundaryIs")[0];
+    if (!outer) return;
+    const oc = byTag(outer, "coordinates")[0];
+    if (!oc) return;
+    const rings = [closeRing(parseCoords(oc.textContent))];
+    byTag(poly, "innerBoundaryIs").forEach(ib => {
+      const c = byTag(ib, "coordinates")[0];
+      if (c) rings.push(closeRing(parseCoords(c.textContent)));
+    });
+    if (rings[0].length < 4) return;
+    try { out.push(turf.polygon(rings.filter(r => r.length >= 4), { name })); } catch (e) {}
+  });
+  return out;
+}
+
+async function readFile(file) {
+  if (/\.kmz$/i.test(file.name)) {
+    const zip = await JSZip.loadAsync(file);
+    const entry = Object.values(zip.files).find(f => /\.kml$/i.test(f.name));
+    if (!entry) throw new Error("No .kml found inside that KMZ.");
+    return entry.async("string");
+  }
+  return file.text();
+}
+
+function stripHoles(f) {
+  const g = f.geometry;
+  if (g.type === "Polygon") return turf.polygon([g.coordinates[0]]);
+  return turf.multiPolygon(g.coordinates.map(p => [p[0]]));
+}
+
+let excluded = new Set(); // indices of zones left out of the merge
+const activeZones = () => zones.filter((_, i) => !excluded.has(i));
+const zoneName = i => zones[i].properties.name || `Zone ${i + 1}`;
+
+function doMerge() {
+  updateZoneList();
+  if (!zones.length) { merged = null; render(); return; }
+  const active = activeZones();
+  if (!active.length) {
+    merged = null; kmlOut = ""; render();
+    setStatus("Every zone is excluded. Tick at least one zone to merge.", true); return;
+  }
+  const gap = Math.max(0, Number($("gap").value) || 0);
+  let acc = null, failed = 0;
+  const half = gap / 2;
+  for (const z of active) {
+    let f = z;
+    try {
+      if (half > 0) f = turf.buffer(z, half, { units: "meters" });
+      acc = acc ? turf.union(acc, f) : f;
+    } catch (e) { failed++; }
+  }
+  if (acc && half > 0) {
+    try { acc = turf.buffer(acc, -half, { units: "meters" }); } catch (e) {}
+  }
+  if (acc && $("holes").checked) acc = stripHoles(acc);
+  merged = acc;
+  buildKML();
+  render();
+  const n = outlineCount();
+  const ex = excluded.size ? ` ${excluded.size} zone${excluded.size > 1 ? "s" : ""} excluded.` : "";
+  if (failed) setStatus(`${failed} zone${failed>1?"s":""} had broken geometry and were skipped.${ex}`, true);
+  else setStatus((n > 1 ? `Zones form ${n} separate areas. Raise “Close gaps” to join them.` : "Merged into a single outline.") + ex);
+}
+
+function outlineCount() {
+  if (!merged) return 0;
+  return merged.geometry.type === "MultiPolygon" ? merged.geometry.coordinates.length : 1;
+}
+
+function kmlColor(hex, alpha) {
+  const h = hex.replace("#", "");
+  return alpha + h.slice(4,6) + h.slice(2,4) + h.slice(0,2);
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
+function ringKML(r) { return r.map(p => `${+p[0].toFixed(7)},${+p[1].toFixed(7)},0`).join(" "); }
+function polyKML(rings) {
+  return `<Polygon><outerBoundaryIs><LinearRing><coordinates>${ringKML(rings[0])}</coordinates></LinearRing></outerBoundaryIs>` +
+    rings.slice(1).map(r => `<innerBoundaryIs><LinearRing><coordinates>${ringKML(r)}</coordinates></LinearRing></innerBoundaryIs>`).join("") + `</Polygon>`;
+}
+
+function buildKML() {
+  if (!merged) { kmlOut = ""; return; }
+  const name = $("outname").value.trim() || "merged-zone";
+  const col = $("color").value;
+  const polys = merged.geometry.type === "Polygon" ? [merged.geometry.coordinates] : merged.geometry.coordinates;
+  const geom = polys.length === 1 ? polyKML(polys[0]) : `<MultiGeometry>${polys.map(polyKML).join("")}</MultiGeometry>`;
+  let originals = "";
+  if ($("keep").checked) {
+    originals = `<Folder><name>Original zones</name><visibility>0</visibility>` + zones.map((z, i) => excluded.has(i) ? "" :
+      `<Placemark><name>${esc(zoneName(i))}</name><styleUrl>#orig</styleUrl>${polyKML(z.geometry.coordinates)}</Placemark>`).join("") + `</Folder>`;
+  }
+  kmlOut = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(name)}</name>
+<Style id="merged"><LineStyle><color>${kmlColor(col,"ff")}</color><width>${Number($("width").value)||3}</width></LineStyle><PolyStyle><color>${kmlColor(col,"33")}</color><fill>${$("fill").checked?1:0}</fill><outline>1</outline></PolyStyle></Style>
+<Style id="orig"><LineStyle><color>ff6a7a3b</color><width>1</width></LineStyle><PolyStyle><color>226a7a3b</color></PolyStyle></Style>
+<Placemark><name>${esc(name)}</name><styleUrl>#merged</styleUrl>${geom}</Placemark>
+${originals}</Document></kml>`;
+}
+
+function fmtArea(m2) { return m2 >= 1e6 ? (m2/1e6).toFixed(2) + " km²" : m2 >= 1e4 ? (m2/1e4).toFixed(2) + " ha" : Math.round(m2).toLocaleString() + " m²"; }
+function fmtLen(m) { return m >= 1000 ? (m/1000).toFixed(2) + " km" : Math.round(m).toLocaleString() + " m"; }
+
+function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+// ---- Map with basemap ----
+const map = L.map("map", { zoomControl: true, attributionControl: true }).setView([-33.868, 151.21], 14);
+const basemaps = {
+  "Streets": L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }),
+  "Satellite": L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    maxZoom: 19, attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics'
+  })
+};
+let startBase = "Streets";
+try { const b = localStorage.getItem("kzm-basemap"); if (b && basemaps[b]) startBase = b; } catch (e) {}
+basemaps[startBase].addTo(map);
+L.control.layers(basemaps, null, { position: "topright" }).addTo(map);
+map.getContainer().classList.toggle("kit-darkable", startBase === "Streets");
+map.on("baselayerchange", e => { map.getContainer().classList.toggle("kit-darkable", e.name === "Streets"); try { localStorage.setItem("kzm-basemap", e.name); } catch (_) {} });
+L.control.scale({ metric: true, imperial: false }).addTo(map);
+const zonesLayer = L.layerGroup().addTo(map);
+const mergedLayer = L.layerGroup().addTo(map);
+let needFit = true;
+
+const toLatLngs = rings => rings.map(r => r.map(([x, y]) => [y, x]));
+
+function render() {
+  $("sIn").textContent = zones.length ? (excluded.size ? `${zones.length - excluded.size} of ${zones.length}` : zones.length) : "–";
+  $("sOut").textContent = merged ? outlineCount() : "–";
+  if (merged) {
+    $("sArea").textContent = fmtArea(turf.area(merged));
+    $("sPer").textContent = fmtLen(turf.length(turf.polygonToLine(merged), { units: "kilometers" }) * 1000);
+  } else { $("sArea").textContent = $("sPer").textContent = "–"; }
+  zonesLayer.clearLayers(); mergedLayer.clearLayers();
+  if (!zones.length) return;
+  const zoneC = cssVar("--kit-zone") || "#2a5c8f", muted = cssVar("--kit-muted") || "#8a8f8c";
+  zones.forEach((z, i) => {
+    const off = excluded.has(i);
+    L.polygon(toLatLngs(z.geometry.coordinates), off
+      ? { color: muted, weight: 1.5, dashArray: "2 5", fillColor: muted, fillOpacity: 0.08 }
+      : { color: zoneC, weight: 1.5, dashArray: "6 4", fillColor: zoneC, fillOpacity: 0.16 })
+      .bindTooltip(`${esc(zoneName(i))}<br><small>${off ? "Excluded · click to include" : "Click to exclude"}</small>`, { sticky: true })
+      .on("click", () => toggleZone(i))
+      .addTo(zonesLayer);
+  });
+  if (merged) {
+    const polys = merged.geometry.type === "Polygon" ? [merged.geometry.coordinates] : merged.geometry.coordinates;
+    const w = Number($("width").value) || 3;
+    polys.forEach(p => {
+      // white casing so the outline stays visible on satellite imagery
+      L.polygon(toLatLngs(p), { color: "#ffffff", weight: w + 4, opacity: 0.85, fill: false, interactive: false }).addTo(mergedLayer);
+      L.polygon(toLatLngs(p), { color: $("color").value, weight: w + 1, lineJoin: "round", fill: $("fill").checked, fillColor: $("color").value, fillOpacity: 0.15, interactive: false }).addTo(mergedLayer);
+    });
+  }
+  if (needFit) {
+    const b = L.featureGroup([...zonesLayer.getLayers(), ...mergedLayer.getLayers()]).getBounds();
+    if (b.isValid()) map.fitBounds(b, { padding: [30, 30] });
+    needFit = false;
+  }
+}
+
+async function loadText(text, label, example) {
+  try {
+    zones = parseKML(text);
+    excluded = new Set();
+    $("zfilter").value = "";
+    isExample = example;
+    needFit = true;
+    $("fname").textContent = label;
+    $("badge").textContent = example ? "Example" : `${zones.length} zone${zones.length === 1 ? "" : "s"}`;
+    $("badge").classList.toggle("sample", !!example);
+    if (!example) $("outname").value = label.replace(/\.(kml|kmz)$/i, "") + "-merged";
+    if (!zones.length) { merged = null; kmlOut = ""; render(); setStatus("No polygons found in that file. Zones need to be drawn as polygons, not lines or pins.", true); return; }
+    doMerge();
+  } catch (e) { setStatus(e.message || "Couldn't read that file.", true); }
+}
+
+// ---- Zone list (include / exclude) ----
+function toggleZone(i, on) {
+  const include = on === undefined ? excluded.has(i) : on;
+  if (include) excluded.delete(i); else excluded.add(i);
+  doMerge();
+}
+function updateZoneList() {
+  const box = $("zonelist");
+  $("zonecount").textContent = zones.length ? `${zones.length - excluded.size} of ${zones.length} included` : "";
+  const q = $("zfilter").value.trim().toLowerCase();
+  const focused = document.activeElement && /^z\d+$/.test(document.activeElement.id) ? document.activeElement.id : null;
+  const scroll = box.scrollTop;
+  box.replaceChildren();
+  zones.forEach((z, i) => {
+    const name = zoneName(i);
+    if (q && !name.toLowerCase().includes(q)) return;
+    const row = document.createElement("label");
+    row.className = "zrow" + (excluded.has(i) ? " off" : "");
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.id = "z" + i; cb.checked = !excluded.has(i);
+    cb.addEventListener("change", () => toggleZone(i, cb.checked));
+    const span = document.createElement("span"); span.textContent = name;
+    const zoom = document.createElement("button");
+    zoom.type = "button"; zoom.className = "zoomto"; zoom.textContent = "Show"; zoom.title = "Zoom to " + name;
+    zoom.addEventListener("click", e => { e.preventDefault(); map.fitBounds(L.polygon(toLatLngs(z.geometry.coordinates)).getBounds(), { padding: [40, 40], maxZoom: 18 }); });
+    row.append(cb, span, zoom);
+    box.appendChild(row);
+  });
+  if (!box.children.length) {
+    const p = document.createElement("p"); p.className = "hint"; p.style.padding = "8px 10px";
+    p.textContent = zones.length ? "No zones match that search." : "No zones loaded.";
+    box.appendChild(p);
+  }
+  box.scrollTop = scroll;
+  if (focused && $(focused)) $(focused).focus();
+}
+$("zfilter").addEventListener("input", updateZoneList);
+function setAllVisible(on) {
+  const q = $("zfilter").value.trim().toLowerCase();
+  zones.forEach((_, i) => { if (!q || zoneName(i).toLowerCase().includes(q)) { if (on) excluded.delete(i); else excluded.add(i); } });
+  doMerge();
+}
+$("zall").addEventListener("click", () => setAllVisible(true));
+$("znone").addEventListener("click", () => setAllVisible(false));
+
+async function handleFile(file) {
+  if (!file) return;
+  try { await loadText(await readFile(file), file.name, false); }
+  catch (e) { setStatus(e.message || "Couldn't read that file.", true); }
+}
+
+$("file").addEventListener("change", e => handleFile(e.target.files[0]));
+const drop = $("drop");
+drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } });
+["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => handleFile(e.dataTransfer.files[0]));
+document.addEventListener("dragover", e => e.preventDefault());
+document.addEventListener("drop", e => { e.preventDefault(); if (!drop.contains(e.target)) handleFile(e.dataTransfer.files[0]); });
+
+["gap", "holes"].forEach(id => $(id).addEventListener("change", doMerge));
+["keep", "color", "width", "fill", "outname"].forEach(id => $(id).addEventListener("input", () => { buildKML(); render(); }));
+
+$("copy").addEventListener("click", async () => {
+  if (!kmlOut) return;
+  try { await navigator.clipboard.writeText(kmlOut); setStatus("KML copied. Paste it into a text file saved as .kml."); }
+  catch (e) {
+    const ta = document.createElement("textarea"); ta.value = kmlOut; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); setStatus("KML copied."); } catch (_) { setStatus("Copy was blocked. Use Download .kml instead.", true); }
+    ta.remove();
+  }
+});
+
+function save(filename, data) {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  setStatus(`Saved ${filename}.`);
+}
+function outBase() { return ($("outname").value.trim() || "merged-zone").replace(/[^\w.-]+/g, "-"); }
+$("savekml").addEventListener("click", () => { if (kmlOut) save(outBase() + ".kml", kmlOut); });
+$("savezip").addEventListener("click", async () => {
+  if (!kmlOut) return;
+  const zip = new JSZip(); zip.file("doc.kml", kmlOut);
+  save(outBase() + ".kmz", await zip.generateAsync({ type: "blob", compression: "DEFLATE", mimeType: "application/vnd.google-earth.kmz" }));
+});
+$("savejson").addEventListener("click", () => {
+  if (merged) save(outBase() + ".geojson", JSON.stringify(turf.featureCollection([merged]), null, 2));
+});
+
+
+
+
+loadText(SAMPLE, "Example zones loaded", true);
+window.addEventListener("kit:theme", render);
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", render);
+</script>
+
+</body>
+</html>

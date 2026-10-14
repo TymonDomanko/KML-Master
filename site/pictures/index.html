@@ -1,0 +1,1682 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{var t=localStorage.getItem("kmlm-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<title>Zone pictures · KML Master</title>
+<meta name="description" content="Open a KML or KMZ of zones and get one print-ready map page per zone, as a PDF or PNGs.">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Pictures: tool-specific styles. Shared look comes from ../kit/kit.css */
+:root {
+  --paper: var(--kit-paper); --surface: var(--kit-surface); --sunken: var(--kit-sunken); --ink: var(--kit-ink);
+  --muted: var(--kit-muted); --line: var(--kit-line); --accent: var(--kit-accent); --accent-soft: var(--kit-accent-soft);
+  --accent-ink: var(--kit-accent-ink); --reg: var(--kit-signal); --danger: var(--kit-danger); --stage: var(--kit-stage);
+  --shadow: var(--kit-shadow); --display: var(--kit-cond); --body: var(--kit-sans); --mono: var(--kit-mono);
+}
+.panel .kit-scroll { gap: 0; }
+.panel .kit-intro { margin-bottom: 16px; }
+.panel .drop { margin-bottom: 18px; }
+.sample-note { font: 600 12.5px/1.4 var(--kit-cond); color: var(--reg); }
+
+fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 12px; min-width: 0; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.field { display: grid; gap: 5px; min-width: 0; }
+.field > label, .field > .lbl { font-size: 12.5px; font-weight: 500; color: var(--muted); }
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--surface); }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label { text-align: center; padding: 8px 4px; cursor: pointer; font-size: 13px; border-left: 1px solid var(--line); }
+.seg label:first-of-type { border-left: 0; }
+.seg input:checked + label { background: var(--ink); color: var(--paper); }
+.seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.fill { display: grid; grid-template-columns: minmax(0, 1fr) 78px; gap: 10px; align-items: center; }
+.fill .num { position: relative; }
+.fill .num input { padding-right: 24px; }
+.fill .num span { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); font-family: var(--mono); font-size: 12px; pointer-events: none; }
+.hint { margin-top: -4px !important; }
+
+.checks { display: grid; gap: 8px; }
+.color-field { display: flex; gap: 8px; align-items: center; }
+
+/* collapsible sections */
+.sec { border-top: 1px solid var(--line); }
+.sec:last-of-type { border-bottom: 1px solid var(--line); }
+.sec > summary {
+  list-style: none; cursor: pointer; display: grid; grid-template-columns: 14px auto minmax(0, 1fr); align-items: center; gap: 8px;
+  padding: 13px 2px; user-select: none;
+}
+.sec > summary::-webkit-details-marker { display: none; }
+.sec > summary::before {
+  content: ""; width: 7px; height: 7px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
+  transform: rotate(-45deg); transition: transform .15s; justify-self: center;
+}
+.sec[open] > summary::before { transform: rotate(45deg); margin-top: -3px; }
+.sec > summary:hover .sec-t { color: var(--accent); }
+.sec-t { font: 600 14px/1.2 var(--kit-cond); color: var(--ink); white-space: nowrap; }
+.sec-s { font-size: 12.5px; color: var(--muted); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sec-s .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; box-shadow: inset 0 0 0 1px rgb(0 0 0 / .15); }
+.sec-s .off { color: var(--muted); opacity: .75; }
+.sec[open] > summary .sec-s { opacity: 0; }
+.sec-b { display: grid; gap: 12px; padding: 2px 2px 18px 2px; min-width: 0; }
+.sub { display: grid; gap: 12px; padding-left: 12px; border-left: 2px solid var(--line); }
+.foot { display: flex; justify-content: space-between; gap: 12px; padding: 4px 2px 8px; }
+.order { display: flex; align-items: center; gap: 8px; }
+.order label { font-size: 12.5px; color: var(--muted); }
+.order select { height: 30px; width: auto; }
+
+/* zone list */
+.zones-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.links { display: flex; gap: 10px; }
+.linkbtn { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 12.5px; font-weight: 500; }
+.zone-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); max-height: 300px; overflow-y: auto; }
+.zone-list li { display: grid; grid-template-columns: 18px 30px minmax(0, 1fr); gap: 8px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); cursor: pointer; }
+.zone-list li:first-child { border-top: 0; }
+.zone-list li:hover { background: var(--sunken); }
+.zone-list li.sel { background: var(--accent-soft); }
+.zone-list li.sel .zn { font-weight: 600; }
+.zone-list input { accent-color: var(--accent); margin: 0; width: 16px; height: 16px; }
+.zone-list .idx { font: 500 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.zone-list .zn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zone-list li.off .zn, .zone-list li.off .idx { opacity: .45; }
+.empty { padding: 16px; color: var(--muted); font-size: 13px; }
+
+.namebox { position: relative; }
+.namebox input { padding-right: 84px; font-family: var(--mono); font-size: 13px; }
+.namebox span { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); font: 12px var(--mono); pointer-events: none; }
+.shuffle-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.shuffle-row .hint { margin: 0; flex: 1 1 160px; }
+.btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.progress { height: 4px; background: var(--sunken); border-radius: 4px; overflow: hidden; }
+.progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+/* ---------- stage ---------- */
+#map { position: absolute; inset: 0; background: var(--stage); }
+.proof {
+  position: absolute; top: 16px; right: 16px; z-index: 500; width: 310px; max-height: calc(100% - 32px); overflow-y: auto;
+  background: var(--surface); border-radius: 12px; box-shadow: var(--shadow); padding: 14px; display: grid; gap: 10px;
+}
+.proof-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.proof-head h2 { margin: 0; font: 600 15px/1.25 var(--display); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.proof-head .tag { font: 11px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .1em; flex: none; }
+.sheet-wrap { position: relative; padding: 14px; background: var(--sunken); border-radius: 8px; display: grid; place-items: center; min-height: 200px; }
+.sheet { position: relative; max-width: 100%; }
+.sheet canvas { display: block; max-width: 100%; max-height: 380px; width: auto; height: auto; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / .25); }
+/* crop marks */
+.sheet .cm { position: absolute; width: 9px; height: 9px; border-color: var(--reg); border-style: solid; border-width: 0; }
+.sheet .tl { top: -11px; left: -11px; border-right-width: 1px; border-bottom-width: 1px; }
+.sheet .tr { top: -11px; right: -11px; border-left-width: 1px; border-bottom-width: 1px; }
+.sheet .bl { bottom: -11px; left: -11px; border-right-width: 1px; border-top-width: 1px; }
+.sheet .br { bottom: -11px; right: -11px; border-left-width: 1px; border-top-width: 1px; }
+.busy { position: absolute; inset: 0; display: grid; place-items: center; font: 12px var(--mono); color: var(--muted); background: color-mix(in srgb, var(--sunken) 70%, transparent); border-radius: 8px; }
+.spec { font: 12px/1.5 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; margin: 0; }
+.spec b { color: var(--ink); font-weight: 500; }
+
+
+.kit-toast.err { background: var(--danger); color: #fff; }
+
+@media (max-width: 860px) {
+  .kit-stage { display: flex; flex-direction: column; }
+  #map { position: relative; inset: auto; height: 62vh; }
+  .proof { position: static; width: auto; max-height: none; margin: 16px; }
+  .sheet canvas { max-height: 60vh; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<link rel="stylesheet" href="../kit/kit.css?v=dev">
+</head>
+<body class="kit" data-tool="pictures">
+<header class="kit-bar" id="kitBar"></header>
+<script src="../kit/kit.js?v=dev"></script>
+
+<div class="kit-app">
+  <aside class="kit-panel panel" aria-label="Settings">
+    <div class="kit-scroll">
+      <div class="kit-intro">
+        <h1>Zone pictures</h1>
+        <p>Get one map page per zone, sized and centred for printing, as a PDF or PNGs.</p>
+      </div>
+
+      <label class="drop" id="drop" for="fileInput">
+        <strong>Open KML or KMZ</strong>
+        <span>Click to choose a file, or drop it anywhere on the page.</span>
+        <span class="file" id="fileName"></span>
+        <span class="sample-note" id="sampleNote">Showing 4 sample zones in Parramatta until you open a file.</span>
+        <input type="file" id="fileInput" data-kit-kml accept=".kml,.kmz,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz">
+      </label>
+
+      <details class="sec" data-sec="zones" open>
+        <summary><span class="sec-t">Zones</span><span class="sec-s" id="sum-zones"></span></summary>
+        <div class="sec-b">
+          <div class="zones-head">
+            <div class="links">
+              <button type="button" class="linkbtn" id="allOn">Select all</button>
+              <button type="button" class="linkbtn" id="allOff">Select none</button>
+            </div>
+            <div class="order">
+              <label for="sortBy">Order</label>
+              <select id="sortBy">
+                <option value="file">As in file</option>
+                <option value="name" selected>By name (1, 2, 10)</option>
+              </select>
+            </div>
+          </div>
+          <ul class="zone-list" id="zoneList"></ul>
+          <p class="hint">Click a zone to preview its page. Untick zones to leave them out.</p>
+        </div>
+      </details>
+
+      <details class="sec" data-sec="page" open>
+        <summary><span class="sec-t">Page</span><span class="sec-s" id="sum-page"></span></summary>
+        <div class="sec-b">
+          <div class="row">
+            <div class="field">
+              <label for="pageSize">Page size</label>
+              <select id="pageSize">
+                <option value="A5">A5 · 148 × 210</option>
+                <option value="A4" selected>A4 · 210 × 297</option>
+                <option value="A3">A3 · 297 × 420</option>
+                <option value="A2">A2 · 420 × 594</option>
+                <option value="Letter">Letter · 216 × 279</option>
+                <option value="Legal">Legal · 216 × 356</option>
+                <option value="Custom">Custom (mm)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="dpi">Resolution</label>
+              <select id="dpi">
+                <option value="96">96 dpi · draft</option>
+                <option value="150" selected>150 dpi · print</option>
+                <option value="200">200 dpi</option>
+                <option value="300">300 dpi · sharp</option>
+              </select>
+            </div>
+          </div>
+          <div class="row" id="customRow" hidden>
+            <div class="field"><label for="customW">Width (mm)</label><input type="number" id="customW" min="50" max="2000" value="210"></div>
+            <div class="field"><label for="customH">Height (mm)</label><input type="number" id="customH" min="50" max="2000" value="297"></div>
+          </div>
+          <div class="field">
+            <span class="lbl" id="orientLbl">Orientation</span>
+            <div class="seg" role="radiogroup" aria-labelledby="orientLbl">
+              <input type="radio" name="orient" id="oAuto" value="auto" checked><label for="oAuto">Auto</label>
+              <input type="radio" name="orient" id="oPort" value="portrait"><label for="oPort">Portrait</label>
+              <input type="radio" name="orient" id="oLand" value="landscape"><label for="oLand">Landscape</label>
+            </div>
+          </div>
+          <div class="field">
+            <label for="fill">Zone fills this much of the page</label>
+            <div class="fill">
+              <input type="range" id="fill" min="20" max="100" step="1" value="80">
+              <div class="num"><input type="number" id="fillNum" min="20" max="100" value="80" aria-label="Fill percentage"><span>%</span></div>
+            </div>
+          </div>
+          <p class="hint">Measured on the zone's longest side. Auto orientation turns each page whichever way gives the zone more room.</p>
+        </div>
+      </details>
+
+      <details class="sec" data-sec="map">
+        <summary><span class="sec-t">Base map</span><span class="sec-s" id="sum-map"></span></summary>
+        <div class="sec-b">
+          <div class="row">
+            <div class="field">
+              <label for="basemap">Map</label>
+              <select id="basemap">
+                <optgroup label="Sharp at any label size">
+                  <option value="vliberty" selected>Streets</option>
+                  <option value="vbright">Bright streets</option>
+                  <option value="vpositron">Light grey</option>
+                </optgroup>
+                <optgroup label="Image tiles (blur at large labels)">
+                  <option value="osm">OpenStreetMap</option>
+                  <option value="streets">Streets (Esri)</option>
+                  <option value="light">Light grey (Esri)</option>
+                  <option value="imagery">Satellite (Esri)</option>
+                </optgroup>
+                <option value="none">None (outline only)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="textSize">Street label size</label>
+              <select id="textSize">
+                <option value="1">Small</option>
+                <option value="0" selected>Normal</option>
+                <option value="-1">Large</option>
+                <option value="-2">Extra large</option>
+              </select>
+            </div>
+          </div>
+          <div class="field"><label for="fade">Fade the map outside the zone (%)</label><input type="number" id="fade" min="0" max="90" step="5" value="35"></div>
+        </div>
+      </details>
+
+      <details class="sec" data-sec="style">
+        <summary><span class="sec-t">Zone outline</span><span class="sec-s" id="sum-style"></span></summary>
+        <div class="sec-b">
+          <div class="row">
+            <div class="field">
+              <label for="color">Colour</label>
+              <div class="color-field"><input type="color" id="color" value="#e0262f"><label class="check"><input type="checkbox" id="useKml">KML colours</label></div>
+            </div>
+            <div class="field"><label for="lineMM">Width (mm)</label><input type="number" id="lineMM" min="0.1" max="5" step="0.1" value="0.8"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label for="lineOpacity">Outline opacity (%)</label><input type="number" id="lineOpacity" min="0" max="100" step="5" value="100"></div>
+            <div class="field"><label for="fillOpacity">Fill opacity (%)</label><input type="number" id="fillOpacity" min="0" max="100" step="5" value="10"></div>
+          </div>
+        </div>
+      </details>
+
+      <details class="sec" data-sec="others">
+        <summary><span class="sec-t">Neighbouring zones</span><span class="sec-s" id="sum-others"></span></summary>
+        <div class="sec-b">
+          <label class="check"><input type="checkbox" id="showOthers" checked>Show neighbouring zones</label>
+          <div id="otherOpts" class="sub">
+            <div class="row">
+              <div class="field">
+                <label for="otherColor">Colour</label>
+                <div class="color-field"><input type="color" id="otherColor" value="#1f6fd1"><label class="check"><input type="checkbox" id="otherUseKml">KML colours</label></div>
+              </div>
+              <div class="field"><label for="otherLineMM">Width (mm)</label><input type="number" id="otherLineMM" min="0.1" max="5" step="0.1" value="0.5"></div>
+            </div>
+            <div class="row">
+              <div class="field"><label for="otherLineOpacity">Outline opacity (%)</label><input type="number" id="otherLineOpacity" min="0" max="100" step="5" value="70"></div>
+              <div class="field"><label for="otherFillOpacity">Fill opacity (%)</label><input type="number" id="otherFillOpacity" min="0" max="100" step="5" value="0"></div>
+            </div>
+            <label class="check"><input type="checkbox" id="otherDashed" checked>Dashed outline</label>
+            <label class="check"><input type="checkbox" id="otherNames" checked>Show their names</label>
+          </div>
+        </div>
+      </details>
+
+      <details class="sec" data-sec="labels">
+        <summary><span class="sec-t">Page labels</span><span class="sec-s" id="sum-labels"></span></summary>
+        <div class="sec-b">
+          <label class="check"><input type="checkbox" id="showName" checked>Zone name (top left)</label>
+          <label class="check"><input type="checkbox" id="showPageNum" checked>Page number (top right)</label>
+          <label class="check"><input type="checkbox" id="showScale" checked>Scale bar</label>
+        </div>
+      </details>
+
+      <details class="sec" data-sec="inset">
+        <summary><span class="sec-t">Locator minimap</span><span class="sec-s" id="sum-inset"></span></summary>
+        <div class="sec-b">
+          <label class="check"><input type="checkbox" id="showInset">Add a zoomed-out minimap in a corner</label>
+          <div id="insetOpts" class="sub">
+            <div class="row">
+              <div class="field">
+                <label for="insetCorner">Corner</label>
+                <select id="insetCorner">
+                  <option value="auto" selected>Auto (covers least)</option>
+                  <option value="tl">Top left</option>
+                  <option value="tr">Top right</option>
+                  <option value="bl">Bottom left</option>
+                  <option value="br">Bottom right</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="insetZoom">Zoomed out (×)</label>
+                <input type="number" id="insetZoom" min="1.5" max="1000" step="any" value="8">
+              </div>
+            </div>
+            <div class="row">
+              <div class="field"><label for="insetSize">Size (% of short side)</label><input type="number" id="insetSize" min="10" max="60" step="5" value="30"></div>
+              <div class="field">
+                <label for="insetDetail">Street detail</label>
+                <select id="insetDetail">
+                  <option value="0">Normal</option>
+                  <option value="1" selected>More streets</option>
+                  <option value="2">Most streets</option>
+                  <option value="3">Every street</option>
+                </select>
+              </div>
+            </div>
+            <label class="check"><input type="checkbox" id="insetFrame" checked>Outline the page's area on the minimap</label>
+          </div>
+        </div>
+      </details>
+
+      <details class="sec" data-sec="summary">
+        <summary><span class="sec-t">Summary page</span><span class="sec-s" id="sum-summary"></span></summary>
+        <div class="sec-b">
+          <label class="check"><input type="checkbox" id="showSummary" checked>Start with a summary page of all zones</label>
+          <div id="summaryOpts" class="sub">
+            <div class="row">
+              <div class="field">
+                <label for="sumSize">Page size</label>
+                <select id="sumSize">
+                  <option value="same">Same as zone pages</option>
+                  <option value="A4">A4 · 210 × 297</option>
+                  <option value="A3" selected>A3 · 297 × 420</option>
+                  <option value="A2">A2 · 420 × 594</option>
+                  <option value="A1">A1 · 594 × 841</option>
+                  <option value="A0">A0 · 841 × 1189</option>
+                  <option value="Letter">Letter · 216 × 279</option>
+                  <option value="Legal">Legal · 216 × 356</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="sumOrient">Orientation</label>
+                <select id="sumOrient">
+                  <option value="auto" selected>Auto</option>
+                  <option value="portrait">Portrait</option>
+                  <option value="landscape">Landscape</option>
+                </select>
+              </div>
+            </div>
+            <div class="row">
+              <div class="field"><label for="sumFill">Zones fill (%)</label><input type="number" id="sumFill" min="20" max="100" step="1" value="90"></div>
+              <div class="field">
+                <label for="sumLabel">Name size</label>
+                <select id="sumLabel">
+                  <option value="0" selected>Fit each zone</option>
+                  <option value="3">Small (3 mm)</option>
+                  <option value="5">Medium (5 mm)</option>
+                  <option value="8">Large (8 mm)</option>
+                  <option value="12">Extra large (12 mm)</option>
+                </select>
+              </div>
+            </div>
+            <div class="field"><label for="sumFillOpacity">Fill opacity (%)</label><input type="number" id="sumFillOpacity" min="0" max="100" step="5" value="25"></div>
+            <p class="hint">Zones use their colours from the KML. Zones without one use the zone outline colour.</p>
+            <label class="check"><input type="checkbox" id="sumRecolour">Give each zone a new colour, with touching zones clearly different</label>
+            <div class="shuffle-row" id="shuffleRow">
+              <button type="button" class="btn small" id="shuffleColors">Shuffle colours</button>
+            </div>
+            <input type="hidden" id="sumSeed" value="1">
+          </div>
+        </div>
+      </details>
+
+      <div class="foot">
+        <button type="button" class="linkbtn" id="resetAll">Reset all settings</button>
+        <button type="button" class="linkbtn" id="collapseAll">Collapse all</button>
+      </div>
+    </div>
+
+    <div class="kit-actions">
+      <div class="field">
+        <label for="exportName">Export file name</label>
+        <div class="namebox"><input type="text" id="exportName" spellcheck="false" autocomplete="off"><span id="suffix">.pdf / .zip</span></div>
+      </div>
+      <div class="btns">
+        <button type="button" class="btn primary" id="exportPdf">Export PDF</button>
+        <button type="button" class="btn" id="exportPng">Export PNGs (zip)</button>
+      </div>
+      <div class="progress" aria-hidden="true"><i id="bar"></i></div>
+      <div class="status" id="status" role="status"></div>
+    </div>
+  </aside>
+
+  <main class="kit-stage">
+    <div id="map" aria-label="Map of zones"></div>
+    <section class="proof" aria-label="Page preview">
+      <div class="proof-head"><h2 id="proofTitle">No zone selected</h2><span class="tag">Proof</span></div>
+      <div class="sheet-wrap">
+        <div class="sheet" id="sheet">
+          <canvas id="proofCanvas" width="210" height="297"></canvas>
+          <span class="cm tl"></span><span class="cm tr"></span><span class="cm bl"></span><span class="cm br"></span>
+        </div>
+        <div class="busy" id="proofBusy" hidden>Loading map tiles…</div>
+      </div>
+      <p class="spec" id="spec"></p>
+      <button type="button" class="btn" id="savePage">Save this page as PNG</button>
+    </section>
+  </main>
+</div>
+<div class="kit-toast" id="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+"use strict";
+
+/* ================= constants ================= */
+const PAGES = { A5: [148, 210], A4: [210, 297], A3: [297, 420], A2: [420, 594], A1: [594, 841], A0: [841, 1189], Letter: [215.9, 279.4], Legal: [215.9, 355.6] };
+const BASEMAPS = {
+  osm:     { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", sub: "", max: 19, attr: "© OpenStreetMap contributors" },
+  streets: { url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", sub: "", max: 19, attr: "Map © Esri, HERE, Garmin, OpenStreetMap contributors" },
+  light:   { url: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", sub: "", max: 16, attr: "Map © Esri, HERE, Garmin, OpenStreetMap contributors" },
+  imagery: { url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", sub: "", max: 19, attr: "Imagery © Esri, Maxar, Earthstar Geographics" },
+  // Vector maps: drawn fresh at the page's size, so text stays sharp at any label size or dpi.
+  vliberty:  { vector: "https://tiles.openfreemap.org/styles/liberty", max: 22, attr: "OpenFreeMap © OpenMapTiles · Data © OpenStreetMap contributors" },
+  vbright:   { vector: "https://tiles.openfreemap.org/styles/bright", max: 22, attr: "OpenFreeMap © OpenMapTiles · Data © OpenStreetMap contributors" },
+  vpositron: { vector: "https://tiles.openfreemap.org/styles/positron", max: 22, attr: "OpenFreeMap © OpenMapTiles · Data © OpenStreetMap contributors" },
+  none:    { url: null, sub: "", max: 22, attr: "" }
+};
+const STORE_KEY = "kmlZonePictures.v1";
+const SAMPLE_KML = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+<Placemark><name>Sample zone 1</name><Polygon><outerBoundaryIs><LinearRing><coordinates>151.0000,-33.8100 151.0068,-33.8097 151.0071,-33.8158 151.0003,-33.8162 151.0000,-33.8100</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+<Placemark><name>Sample zone 2</name><Polygon><outerBoundaryIs><LinearRing><coordinates>151.0068,-33.8097 151.0142,-33.8101 151.0137,-33.8155 151.0071,-33.8158 151.0068,-33.8097</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+<Placemark><name>Sample zone 3</name><Polygon><outerBoundaryIs><LinearRing><coordinates>151.0003,-33.8162 151.0071,-33.8158 151.0075,-33.8214 150.9998,-33.8219 151.0003,-33.8162</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+<Placemark><name>Sample zone 4</name><Polygon><outerBoundaryIs><LinearRing><coordinates>151.0071,-33.8158 151.0137,-33.8155 151.0149,-33.8209 151.0075,-33.8214 151.0071,-33.8158</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+</Document></kml>`;
+
+/* ================= helpers ================= */
+const $ = (s) => document.querySelector(s);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const num = (el, def) => { const v = parseFloat(el.value); return Number.isFinite(v) ? v : def; };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function project(lon, lat) {
+  const s = clamp(Math.sin(lat * Math.PI / 180), -0.9999, 0.9999);
+  return [(lon + 180) / 360 * 256, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 256];
+}
+function unproject(x, y) {
+  const n = Math.PI - 2 * Math.PI * y / 256;
+  return [x / 256 * 360 - 180, 180 / Math.PI * Math.atan(Math.sinh(n))];
+}
+function hexToRgba(hex, a) {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+function safeName(s) { return (s || "zone").replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 80) || "zone"; }
+
+let toastTimer;
+function toast(msg, isErr) {
+  const t = $("#toast");
+  t.textContent = msg; t.className = "kit-toast" + (isErr ? " err" : ""); t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), isErr ? 7000 : 4000);
+}
+
+/* ================= KML parsing ================= */
+function kids(el, tag) { return Array.from(el.getElementsByTagNameNS("*", tag)); }
+function firstText(el, tag) { const n = el && el.getElementsByTagNameNS("*", tag)[0]; return n ? n.textContent.trim() : ""; }
+function childText(el, tag) { const n = Array.from(el.children).find((c) => c.localName === tag); return n ? n.textContent.trim() : ""; }
+function kmlColor(t) {
+  t = (t || "").trim().replace("#", "");
+  if (!/^[0-9a-f]{8}$/i.test(t)) return null;
+  return "#" + t.slice(6, 8) + t.slice(4, 6) + t.slice(2, 4); // aabbggrr -> #rrggbb
+}
+function readStyle(el) {
+  const ls = el.getElementsByTagNameNS("*", "LineStyle")[0];
+  const ps = el.getElementsByTagNameNS("*", "PolyStyle")[0];
+  return { line: ls ? kmlColor(firstText(ls, "color")) : null, poly: ps ? kmlColor(firstText(ps, "color")) : null };
+}
+function parseCoords(txt) {
+  const pts = [];
+  for (const tok of txt.trim().split(/\s+/)) {
+    const [lon, lat] = tok.split(",").map(Number);
+    if (Number.isFinite(lon) && Number.isFinite(lat)) pts.push([lon, lat]);
+  }
+  return pts;
+}
+function parseKML(text) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length) throw new Error("This file isn't valid KML. Check it opens in Google Earth.");
+  const styles = {};
+  for (const s of kids(doc, "Style")) { const id = s.getAttribute("id"); if (id) styles["#" + id] = readStyle(s); }
+  for (const m of kids(doc, "StyleMap")) {
+    const id = m.getAttribute("id"); if (!id) continue;
+    for (const p of kids(m, "Pair")) {
+      if (firstText(p, "key") !== "normal") continue;
+      const inline = p.getElementsByTagNameNS("*", "Style")[0];
+      styles["#" + id] = inline ? readStyle(inline) : firstText(p, "styleUrl");
+    }
+  }
+  const resolve = (url, depth = 0) => {
+    if (!url || depth > 4) return null;
+    const v = styles[url.slice(url.indexOf("#"))];
+    return typeof v === "string" ? resolve(v, depth + 1) : v || null;
+  };
+
+  const zones = [];
+  kids(doc, "Placemark").forEach((pm) => {
+    const polys = [];
+    for (const poly of kids(pm, "Polygon")) {
+      const outerEl = poly.getElementsByTagNameNS("*", "outerBoundaryIs")[0];
+      const outer = outerEl ? parseCoords(firstText(outerEl, "coordinates")) : [];
+      if (outer.length < 3) continue;
+      const rings = [outer];
+      for (const inEl of kids(poly, "innerBoundaryIs")) {
+        const r = parseCoords(firstText(inEl, "coordinates"));
+        if (r.length >= 3) rings.push(r);
+      }
+      polys.push(rings);
+    }
+    if (!polys.length) return;
+    const inlineStyle = Array.from(pm.children).find((c) => c.localName === "Style");
+    const st = inlineStyle ? readStyle(inlineStyle) : resolve(childText(pm, "styleUrl"));
+    zones.push(makeZone(childText(pm, "name") || `Zone ${zones.length + 1}`, polys, st ? st.line || st.poly : null, zones.length));
+  });
+  return zones;
+}
+function makeZone(name, polys, color, fileIndex) {
+  const proj = polys.map((rings) => rings.map((r) => r.map(([lon, lat]) => project(lon, lat))));
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const rings of proj) for (const [x, y] of rings[0]) {
+    if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+  }
+  return { id: "z" + fileIndex + "_" + Math.random().toString(36).slice(2, 7), name, polys, proj, color, fileIndex, include: true, bb: { minX, minY, maxX, maxY } };
+}
+async function readFile(file) {
+  if (/\.kmz$/i.test(file.name)) {
+    const zip = await JSZip.loadAsync(file);
+    const names = Object.keys(zip.files).filter((n) => /\.kml$/i.test(n) && !zip.files[n].dir);
+    if (!names.length) throw new Error("No KML found inside this KMZ.");
+    const main = names.find((n) => /(^|\/)doc\.kml$/i.test(n)) || names[0];
+    return zip.file(main).async("string");
+  }
+  return file.text();
+}
+
+/* ================= state & options ================= */
+let zones = [];
+let selectedId = null;
+let sourceName = "sample";
+
+function readOpts() {
+  const size = $("#pageSize").value;
+  const page = size === "Custom"
+    ? [clamp(num($("#customW"), 210), 50, 2000), clamp(num($("#customH"), 297), 50, 2000)]
+    : PAGES[size];
+  return {
+    size, page,
+    orient: document.querySelector('input[name="orient"]:checked').value,
+    fill: clamp(num($("#fillNum"), 80), 20, 100),
+    dpi: parseInt($("#dpi").value, 10),
+    basemap: $("#basemap").value,
+    textShift: parseInt($("#textSize").value, 10),
+    color: $("#color").value,
+    useKml: $("#useKml").checked,
+    lineMM: clamp(num($("#lineMM"), 0.8), 0.1, 5),
+    lineOpacity: clamp(num($("#lineOpacity"), 100), 0, 100) / 100,
+    fillOpacity: clamp(num($("#fillOpacity"), 10), 0, 100) / 100,
+    fade: clamp(num($("#fade"), 35), 0, 90) / 100,
+    showOthers: $("#showOthers").checked,
+    otherColor: $("#otherColor").value,
+    otherUseKml: $("#otherUseKml").checked,
+    otherLineMM: clamp(num($("#otherLineMM"), 0.5), 0.1, 5),
+    otherLineOpacity: clamp(num($("#otherLineOpacity"), 70), 0, 100) / 100,
+    otherFillOpacity: clamp(num($("#otherFillOpacity"), 0), 0, 100) / 100,
+    otherDashed: $("#otherDashed").checked,
+    otherNames: $("#otherNames").checked,
+    showInset: $("#showInset").checked,
+    insetCorner: $("#insetCorner").value,
+    insetZoom: clamp(num($("#insetZoom"), 8), 1.5, 1000),
+    insetSize: clamp(num($("#insetSize"), 30), 10, 60),
+    insetFrame: $("#insetFrame").checked,
+    showSummary: $("#showSummary").checked,
+    sumSize: $("#sumSize").value,
+    sumOrient: $("#sumOrient").value,
+    sumFill: clamp(num($("#sumFill"), 90), 20, 100),
+    sumLabel: parseFloat($("#sumLabel").value) || 0,
+    sumColors: $("#sumRecolour").checked ? "distinct" : "kml",
+    sumFillOpacity: clamp(num($("#sumFillOpacity"), 25), 0, 100) / 100,
+    sumSeed: parseInt($("#sumSeed").value, 10) || 1,
+    insetDetail: parseInt($("#insetDetail").value, 10) || 0,
+    showName: $("#showName").checked,
+    showPageNum: $("#showPageNum").checked,
+    showScale: $("#showScale").checked,
+    sortBy: $("#sortBy").value
+  };
+}
+const SAVED_IDS = ["pageSize", "customW", "customH", "fillNum", "dpi", "basemap", "textSize", "color", "useKml", "lineMM", "lineOpacity", "fillOpacity", "fade", "showOthers", "otherColor", "otherUseKml", "otherLineMM", "otherLineOpacity", "otherFillOpacity", "otherDashed", "otherNames", "showInset", "insetCorner", "insetZoom", "insetSize", "insetFrame", "insetDetail", "showSummary", "sumSize", "sumOrient", "sumFill", "sumLabel", "sumRecolour", "sumFillOpacity", "sumSeed", "showName", "showPageNum", "showScale", "sortBy"];
+function saveSettings() {
+  try {
+    const o = { orient: document.querySelector('input[name="orient"]:checked').value };
+    for (const id of SAVED_IDS) { const el = $("#" + id); o[id] = el.type === "checkbox" ? el.checked : el.value; }
+    localStorage.setItem(STORE_KEY, JSON.stringify(o));
+  } catch (e) { /* storage unavailable */ }
+}
+function loadSettings() {
+  try {
+    const o = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
+    if (!o) return;
+    for (const id of SAVED_IDS) {
+      if (!(id in o)) continue;
+      const el = $("#" + id);
+      if (el.type === "checkbox") el.checked = !!o[id]; else el.value = o[id];
+    }
+    if (!BASEMAPS[$("#basemap").value]) $("#basemap").value = "osm"; // saved setting from a removed map source
+    if ("showTitle" in o && !("showName" in o)) $("#showName").checked = $("#showPageNum").checked = !!o.showTitle;
+    $("#fill").value = $("#fillNum").value;
+    const r = document.querySelector(`input[name="orient"][value="${o.orient}"]`); if (r) r.checked = true;
+  } catch (e) { /* ignore */ }
+}
+
+function orderedZones(o = readOpts()) {
+  const list = zones.slice();
+  if (o.sortBy === "name") list.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+  else list.sort((a, b) => a.fileIndex - b.fileIndex);
+  return list;
+}
+const zoneColor = (z, o) => (o.useKml && z.color) ? z.color : o.color;
+const otherColor = (z, o) => (o.otherUseKml && z.color) ? z.color : o.otherColor;
+
+/* ================= page layout maths ================= */
+function layout(zone, o, dpi) {
+  let [w, h] = o.page;
+  const pw = Math.min(w, h), ph = Math.max(w, h);
+  const bw = Math.max(zone.bb.maxX - zone.bb.minX, 1e-9), bh = Math.max(zone.bb.maxY - zone.bb.minY, 1e-9);
+  let orient = o.orient;
+  if (orient === "auto") orient = Math.min(ph / bw, pw / bh) > Math.min(pw / bw, ph / bh) * 1.0001 ? "landscape" : "portrait";
+  [w, h] = orient === "landscape" ? [ph, pw] : [pw, ph];
+  const pxW = Math.round(w / 25.4 * dpi), pxH = Math.round(h / 25.4 * dpi);
+  let s = (o.fill / 100) * Math.min(pxW / bw, pxH / bh);
+  s = Math.min(s, 2 ** 24);
+  const zoomF = Math.log2(s);
+  const bm = BASEMAPS[o.basemap];
+  // Tile zoom is independent of dpi, so labels keep the same physical size on paper at any resolution.
+  const zt = clamp(Math.round(zoomF - Math.log2(dpi / 96)) + o.textShift, 0, bm.max);
+  const cx = (zone.bb.minX + zone.bb.maxX) / 2, cy = (zone.bb.minY + zone.bb.maxY) / 2;
+  return { w, h, orient, pxW, pxH, s, zoomF, zt, dpi, ox: cx * s - pxW / 2, oy: cy * s - pxH / 2, pxPerMM: dpi / 25.4 };
+}
+
+/* ================= tiles ================= */
+const tileCache = new Map();
+const queue = []; let active = 0;
+const MAX_ACTIVE = 8, MAX_CACHE = 700;
+function pump() { while (active < MAX_ACTIVE && queue.length) { active++; queue.shift()(); } }
+function tileUrl(bm, z, x, y) {
+  let u = bm.url.replace("{z}", z).replace("{x}", x).replace("{y}", y);
+  if (bm.sub) u = u.replace("{s}", bm.sub[(x + y) % bm.sub.length]);
+  return u;
+}
+function getTile(bmKey, z, x, y) {
+  const key = `${bmKey}/${z}/${x}/${y}`;
+  if (tileCache.has(key)) { const p = tileCache.get(key); tileCache.delete(key); tileCache.set(key, p); return p; }
+  const p = new Promise((resolve, reject) => {
+    queue.push(() => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      const done = () => { active--; pump(); };
+      img.onload = () => { done(); resolve(img); };
+      img.onerror = () => { done(); tileCache.delete(key); reject(new Error("tile")); };
+      img.src = tileUrl(BASEMAPS[bmKey], z, x, y);
+    });
+    pump();
+  });
+  tileCache.set(key, p);
+  while (tileCache.size > MAX_CACHE) tileCache.delete(tileCache.keys().next().value);
+  return p;
+}
+async function drawTiles(ctx, L, bmKey) {
+  const bm = BASEMAPS[bmKey];
+  if (!bm.url) return 0;
+  const n = 2 ** L.zt, k = L.s * 256 / n; // page pixels per tile
+  const tx0 = Math.floor(L.ox / k), tx1 = Math.floor((L.ox + L.pxW - 1e-6) / k);
+  const ty0 = Math.max(0, Math.floor(L.oy / k)), ty1 = Math.min(n - 1, Math.floor((L.oy + L.pxH - 1e-6) / k));
+  let failed = 0;
+  const jobs = [];
+  for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
+    const wx = ((tx % n) + n) % n;
+    jobs.push(getTile(bmKey, L.zt, wx, ty).then((img) => {
+      const l = Math.round(tx * k - L.ox), r = Math.round((tx + 1) * k - L.ox);
+      const t = Math.round(ty * k - L.oy), b = Math.round((ty + 1) * k - L.oy);
+      ctx.drawImage(img, l, t, r - l, b - t);
+    }, () => { failed++; }));
+  }
+  await Promise.all(jobs);
+  return failed;
+}
+
+/* ================= vector maps (MapLibre, rendered off-screen) ================= */
+// Label size: Small 0.71×, Normal 1×, Large 1.41×, Extra large 2× the standard size on paper.
+const labelScale = (o) => 2 ** (-o.textShift / 2);
+let glMax = null;
+function maxGLSize() {
+  if (glMax) return glMax;
+  try {
+    const gl = document.createElement("canvas").getContext("webgl");
+    const dims = gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+    glMax = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), dims[0], dims[1], 8192);
+  } catch (e) { glMax = 4096; }
+  return glMax;
+}
+let vMap = null, vStyle = null, vDiv = null, vErrors = 0, vLock = Promise.resolve();
+function drawVector(ctx, L_, o) {
+  // one render at a time: the off-screen map is shared between the proof and exports
+  const job = vLock.then(() => renderVectorNow(ctx, L_, o));
+  vLock = job.catch(() => {});
+  return job;
+}
+async function renderVectorNow(ctx, L_, o) {
+  if (typeof maplibregl === "undefined") throw new Error("The map drawing library didn't load. Check your connection and reload the page.");
+  const bm = BASEMAPS[o.basemap];
+  // pixel ratio sets how big text prints; shrink it only if the page is larger than the graphics card allows
+  let pr = (L_.dpi / 96) * labelScale(o) / 2 ** (L_.detail || 0);
+  const cssW = Math.max(1, Math.round(L_.pxW / pr)), cssH = Math.max(1, Math.round(L_.pxH / pr));
+  const lim = maxGLSize();
+  let renderPr = pr;
+  if (cssW * renderPr > lim || cssH * renderPr > lim) renderPr = Math.min(lim / cssW, lim / cssH);
+  const zoom = Math.log2(L_.s / (2 * pr));
+  const [lng, lat] = unproject((L_.ox + L_.pxW / 2) / L_.s, (L_.oy + L_.pxH / 2) / L_.s);
+
+  if (!vDiv) {
+    vDiv = document.createElement("div");
+    vDiv.style.cssText = "position:fixed;left:-200000px;top:0;visibility:hidden;pointer-events:none;";
+    document.body.append(vDiv);
+  }
+  vDiv.style.width = cssW + "px"; vDiv.style.height = cssH + "px";
+  vErrors = 0;
+  if (!vMap || vStyle !== bm.vector) {
+    if (vMap) vMap.remove();
+    vStyle = bm.vector;
+    vMap = new maplibregl.Map({
+      container: vDiv, style: bm.vector, center: [lng, lat], zoom, interactive: false,
+      attributionControl: false, pixelRatio: renderPr, preserveDrawingBuffer: true, fadeDuration: 0,
+      maxCanvasSize: [lim, lim], maxZoom: 24, renderWorldCopies: true
+    });
+    vMap.on("error", () => { vErrors++; });
+    await new Promise((res, rej) => {
+      const t = setTimeout(() => rej(new Error("The map style took too long to load. Check your connection.")), 30000);
+      vMap.once("load", () => { clearTimeout(t); res(); });
+    });
+  } else {
+    vMap.setPixelRatio(renderPr);
+    vMap.resize();
+    vMap.jumpTo({ center: [lng, lat], zoom });
+  }
+  vMap.resize();
+  vMap.jumpTo({ center: [lng, lat], zoom });
+  await new Promise((res) => {
+    const t = setTimeout(res, 45000);
+    vMap.once("idle", () => { clearTimeout(t); res(); });
+    vMap.triggerRepaint();
+  });
+  ctx.drawImage(vMap.getCanvas(), 0, 0, L_.pxW, L_.pxH);
+  return vErrors;
+}
+
+/* ================= drawing the page ================= */
+function tracePath(ctx, zone, L) {
+  for (const rings of zone.proj) for (const ring of rings) {
+    ring.forEach(([x, y], i) => {
+      const px = x * L.s - L.ox, py = y * L.s - L.oy;
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    });
+    ctx.closePath();
+  }
+}
+function niceNumber(t) {
+  const p = 10 ** Math.floor(Math.log10(t)), m = t / p;
+  return (m >= 5 ? 5 : m >= 2 ? 2 : 1) * p;
+}
+function labelBox(ctx, text, x, y, mm, opts = {}) {
+  const size = (opts.size || 4.2) * mm, pad = 1.6 * mm;
+  ctx.font = `${opts.weight || 600} ${size}px "IBM Plex Sans", system-ui, sans-serif`;
+  const tw = ctx.measureText(text).width;
+  const bw = tw + pad * 2, bh = size * 1.35 + pad * 1.2;
+  const bx = opts.align === "right" ? x - bw : x, by = opts.valign === "bottom" ? y - bh : y;
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  ctx.beginPath(); ctx.roundRect ? ctx.roundRect(bx, by, bw, bh, 1 * mm) : ctx.rect(bx, by, bw, bh); ctx.fill();
+  ctx.fillStyle = opts.color || "#1a1f26";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, bx + pad, by + bh / 2);
+  return { bw, bh };
+}
+
+function drawBase(ctx, L_, o) {
+  return BASEMAPS[o.basemap].vector ? drawVector(ctx, L_, o) : drawTiles(ctx, L_, o.basemap);
+}
+
+/* ---------- locator minimap ---------- */
+function insetLayout(zone, L_, o) {
+  const side = Math.round(Math.min(L_.pxW, L_.pxH) * o.insetSize / 100);
+  // the minimap shows an area insetZoom times wider than the main page
+  const s2 = side * L_.s / (o.insetZoom * L_.pxW);
+  const cx = (zone.bb.minX + zone.bb.maxX) / 2, cy = (zone.bb.minY + zone.bb.maxY) / 2;
+  // detail: draw from this many zoom levels deeper, so minor streets that are hidden when zoomed out still appear
+  const detail = o.insetDetail || 0;
+  const tileDetail = Math.min(detail, 2); // image tiles: deeper than 2 levels means hundreds of tiny tiles per minimap
+  const zt = clamp(Math.round(Math.log2(s2) - Math.log2(L_.dpi / 96)) + o.textShift + tileDetail, 0, BASEMAPS[o.basemap].max);
+  return { pxW: side, pxH: side, s: s2, ox: cx * s2 - side / 2, oy: cy * s2 - side / 2, dpi: L_.dpi, zt, detail, pxPerMM: L_.pxPerMM };
+}
+function insetCandidates(L_, o, w, h) {
+  const mm = L_.pxPerMM, m = 5 * mm, gap = 2.5 * mm;
+  const topL = o.showName ? m + 8.5 * mm + gap : m;                     // below zone name
+  const topR = o.showPageNum ? m + 7 * mm + gap : m;                    // below page number
+  const bl = o.showScale ? m + 9.5 * mm + gap : m;                       // above scale bar
+  const br = BASEMAPS[o.basemap].attr ? Math.max(m, 4.2 * mm + gap) : m; // above map credit
+  return {
+    br: [L_.pxW - m - w, L_.pxH - br - h],
+    tr: [L_.pxW - m - w, topR],
+    bl: [m, L_.pxH - bl - h],
+    tl: [m, topL]
+  };
+}
+function placeInset(zone, L_, o, w, h) {
+  const cands = insetCandidates(L_, o, w, h);
+  if (o.insetCorner !== "auto" && cands[o.insetCorner]) return cands[o.insetCorner];
+  // draw the zone (fill + outline) onto a small mask and count how much of it each corner would hide
+  const k = 300 / Math.max(L_.pxW, L_.pxH);
+  const mw = Math.ceil(L_.pxW * k), mh = Math.ceil(L_.pxH * k);
+  const mc = document.createElement("canvas"); mc.width = mw; mc.height = mh;
+  const mx = mc.getContext("2d");
+  mx.scale(k, k);
+  mx.beginPath(); tracePath(mx, zone, L_);
+  mx.fillStyle = "#000"; mx.fill("evenodd");
+  mx.lineWidth = Math.max(o.lineMM * L_.pxPerMM, 1 / k) * 2; mx.strokeStyle = "#000"; mx.stroke();
+  const data = mx.getImageData(0, 0, mw, mh).data;
+  let best = null, bestScore = Infinity;
+  for (const key of ["br", "tr", "bl", "tl"]) { // ties go to the earlier corner
+    const [x, y] = cands[key];
+    const x0 = clamp(Math.floor(x * k), 0, mw), x1 = clamp(Math.ceil((x + w) * k), 0, mw);
+    const y0 = clamp(Math.floor(y * k), 0, mh), y1 = clamp(Math.ceil((y + h) * k), 0, mh);
+    let score = 0;
+    for (let yy = y0; yy < y1; yy++) for (let xx = x0; xx < x1; xx++) if (data[(yy * mw + xx) * 4 + 3] > 0) score++;
+    if (score < bestScore) { bestScore = score; best = cands[key]; }
+  }
+  return best;
+}
+async function drawInset(ctx, zone, L_, o) {
+  const I = insetLayout(zone, L_, o);
+  const mm = L_.pxPerMM;
+  const c2 = document.createElement("canvas"); c2.width = I.pxW; c2.height = I.pxH;
+  const x2 = c2.getContext("2d");
+  x2.imageSmoothingQuality = "high";
+  x2.fillStyle = o.basemap === "none" ? "#ffffff" : "#eceeea"; x2.fillRect(0, 0, I.pxW, I.pxH);
+  const failed = await drawBase(x2, I, o);
+  x2.lineJoin = "round";
+  if (o.showOthers) {
+    for (const z of zones) {
+      if (z === zone) continue;
+      x2.beginPath(); tracePath(x2, z, I);
+      x2.strokeStyle = hexToRgba(otherColor(z, o), Math.max(0.35, o.otherLineOpacity * 0.8));
+      x2.lineWidth = Math.max(1, 0.25 * mm); x2.stroke();
+    }
+  }
+  const col = zoneColor(zone, o);
+  x2.beginPath(); tracePath(x2, zone, I);
+  x2.fillStyle = hexToRgba(col, 0.4); x2.fill("evenodd");
+  x2.strokeStyle = col; x2.lineWidth = Math.max(1, 0.45 * mm); x2.stroke();
+  // if the zone is tiny at this zoom, ring it so it's still easy to find
+  const zw = (zone.bb.maxX - zone.bb.minX) * I.s, zh = (zone.bb.maxY - zone.bb.minY) * I.s;
+  if (Math.max(zw, zh) < 4 * mm) {
+    x2.beginPath(); x2.arc(I.pxW / 2, I.pxH / 2, 3 * mm, 0, Math.PI * 2);
+    x2.strokeStyle = col; x2.lineWidth = Math.max(1, 0.5 * mm); x2.stroke();
+  }
+  if (o.insetFrame) {
+    const fx = L_.ox / L_.s * I.s - I.ox, fy = L_.oy / L_.s * I.s - I.oy;
+    const fw = L_.pxW / L_.s * I.s, fh = L_.pxH / L_.s * I.s;
+    x2.setLineDash([1.2 * mm, 0.8 * mm]);
+    x2.strokeStyle = "rgba(26,31,38,0.85)"; x2.lineWidth = Math.max(1, 0.3 * mm);
+    x2.strokeRect(fx, fy, fw, fh);
+    x2.setLineDash([]);
+  }
+
+  const [x, y] = placeInset(zone, L_, o, I.pxW, I.pxH);
+  const pad = 0.8 * mm;
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.25)"; ctx.shadowBlur = 1.5 * mm; ctx.shadowOffsetY = 0.3 * mm;
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(x - pad, y - pad, I.pxW + pad * 2, I.pxH + pad * 2);
+  ctx.restore();
+  ctx.drawImage(c2, x, y);
+  ctx.strokeStyle = "rgba(26,31,38,0.6)"; ctx.lineWidth = Math.max(1, 0.2 * mm); ctx.setLineDash([]);
+  ctx.strokeRect(x, y, I.pxW, I.pxH);
+  return failed;
+}
+
+function drawFurniture(ctx, L, o) {
+  const mm = L.pxPerMM, m = 5 * mm;
+  if (o.showScale) {
+    const lat = unproject(0, (L.oy + L.pxH / 2) / L.s)[1];
+    const mpp = 40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * L.s);
+    const meters = niceNumber(L.pxW * 0.2 * mpp), barPx = meters / mpp;
+    const label = meters >= 1000 ? `${meters / 1000} km` : `${meters} m`;
+    const pad = 2 * mm, bx = m, bh = 9.5 * mm, by = L.pxH - m - bh;
+    ctx.font = `500 ${3.2 * mm}px "IBM Plex Sans", system-ui, sans-serif`;
+    const lwid = ctx.measureText(label).width;
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(bx, by, barPx + pad * 3 + lwid, bh, mm) : ctx.rect(bx, by, barPx + pad * 3 + lwid, bh); ctx.fill();
+    const barY = by + bh / 2 - 0.9 * mm, barH = 1.8 * mm;
+    ctx.fillStyle = "#1a1f26"; ctx.fillRect(bx + pad, barY, barPx / 2, barH);
+    ctx.strokeStyle = "#1a1f26"; ctx.lineWidth = Math.max(1, 0.25 * mm);
+    ctx.strokeRect(bx + pad, barY, barPx, barH);
+    ctx.textBaseline = "middle"; ctx.textAlign = "left";
+    ctx.fillText(label, bx + pad * 2 + barPx, by + bh / 2);
+  }
+  const attr = BASEMAPS[o.basemap].attr;
+  if (attr) {
+    ctx.font = `400 ${2.1 * mm}px "IBM Plex Sans", system-ui, sans-serif`;
+    const tw = ctx.measureText(attr).width;
+    ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.fillRect(L.pxW - tw - 3 * mm, L.pxH - 4.2 * mm, tw + 3 * mm, 4.2 * mm);
+    ctx.fillStyle = "#3c424a"; ctx.textBaseline = "middle"; ctx.textAlign = "left";
+    ctx.fillText(attr, L.pxW - tw - 1.5 * mm, L.pxH - 2.1 * mm);
+  }
+}
+
+async function renderZone(zone, pos, total, o, dpi) {
+  const L = layout(zone, o, dpi);
+  const c = document.createElement("canvas");
+  c.width = L.pxW; c.height = L.pxH;
+  const ctx = c.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
+  ctx.fillStyle = o.basemap === "none" ? "#ffffff" : "#eceeea";
+  ctx.fillRect(0, 0, L.pxW, L.pxH);
+  let failed = await drawBase(ctx, L, o);
+  const mm = L.pxPerMM, lw = o.lineMM * mm;
+  const col = zoneColor(zone, o);
+
+  // fade everything outside the zone
+  if (o.fade > 0) {
+    ctx.beginPath(); ctx.rect(0, 0, L.pxW, L.pxH); tracePath(ctx, zone, L);
+    ctx.fillStyle = `rgba(255,255,255,${o.fade})`; ctx.fill("evenodd");
+  }
+
+  // neighbouring zones (after the fade so their opacity is exactly what's set)
+  if (o.showOthers) {
+    const vx0 = L.ox / L.s, vx1 = (L.ox + L.pxW) / L.s, vy0 = L.oy / L.s, vy1 = (L.oy + L.pxH) / L.s;
+    ctx.save();
+    ctx.lineJoin = "round";
+    if (o.otherDashed) ctx.setLineDash([2.2 * mm, 1.4 * mm]);
+    for (const z of zones) {
+      if (z === zone || z.bb.maxX < vx0 || z.bb.minX > vx1 || z.bb.maxY < vy0 || z.bb.minY > vy1) continue;
+      const c = otherColor(z, o);
+      ctx.beginPath(); tracePath(ctx, z, L);
+      if (o.otherFillOpacity > 0) { ctx.fillStyle = hexToRgba(c, o.otherFillOpacity); ctx.fill("evenodd"); }
+      if (o.otherLineOpacity > 0) { ctx.strokeStyle = hexToRgba(c, o.otherLineOpacity); ctx.lineWidth = Math.max(1, o.otherLineMM * mm); ctx.stroke(); }
+    }
+    ctx.restore();
+  }
+
+  // neighbour names: placed inside each neighbour, skipped if there's no free spot on the page
+  if (o.showOthers && o.otherNames) {
+    const placer = makePlacer(L.pxW, L.pxH, furnitureRects(ctx, L, o, zone.name, total ? `${pos} / ${total}` : null));
+    const size = 3 * mm;
+    const vx0 = L.ox / L.s, vx1 = (L.ox + L.pxW) / L.s, vy0 = L.oy / L.s, vy1 = (L.oy + L.pxH) / L.s;
+    for (const z of zones) {
+      if (z === zone || z.bb.maxX < vx0 || z.bb.minX > vx1 || z.bb.maxY < vy0 || z.bb.minY > vy1) continue;
+      for (const [x, y] of insideSpots(z, L).spots) {
+        const r = labelRect(ctx, z.name, size, x, y, 500);
+        if (placer.fits(r)) { placer.add(r); drawLabel(ctx, z.name, size, x, y, "rgba(60,66,74,0.95)", 500); break; }
+      }
+    }
+  }
+
+  // the zone itself
+  ctx.beginPath(); tracePath(ctx, zone, L);
+  if (o.fillOpacity > 0) { ctx.fillStyle = hexToRgba(col, o.fillOpacity); ctx.fill("evenodd"); }
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  if (o.lineOpacity > 0) {
+    ctx.strokeStyle = `rgba(255,255,255,${0.85 * o.lineOpacity})`; ctx.lineWidth = lw + 0.8 * mm; ctx.stroke();
+    ctx.strokeStyle = hexToRgba(col, o.lineOpacity); ctx.lineWidth = lw; ctx.stroke();
+  }
+
+  if (o.showInset) failed += await drawInset(ctx, zone, L, o);
+
+  const m = 5 * mm;
+  {
+    if (o.showName) labelBox(ctx, zone.name, m, m, mm, { size: 4.6 });
+    if (o.showPageNum && total) labelBox(ctx, `${pos} / ${total}`, L.pxW - m, m, mm, { size: 3.4, weight: 500, align: "right", color: "#5b646e" });
+  }
+  drawFurniture(ctx, L, o);
+  return { canvas: c, L, failed };
+}
+
+/* ---------- label placement without overlaps ---------- */
+const LABEL_FONT = (size, weight = 700) => `${weight} ${size}px "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif`;
+function makePlacer(pxW, pxH, blocked) {
+  const rects = blocked.slice();
+  const hit = (r, q) => r.x < q.x + q.w && q.x < r.x + r.w && r.y < q.y + q.h && q.y < r.y + r.h;
+  return {
+    fits(r) { return r.x >= 0 && r.y >= 0 && r.x + r.w <= pxW && r.y + r.h <= pxH && !rects.some((q) => hit(r, q)); },
+    overlap(r) { let a = 0; for (const q of rects) if (hit(r, q)) a += (Math.min(r.x + r.w, q.x + q.w) - Math.max(r.x, q.x)) * (Math.min(r.y + r.h, q.y + q.h) - Math.max(r.y, q.y)); return a; },
+    add(r) { rects.push(r); }
+  };
+}
+// Rectangles the page furniture occupies (title, page number, scale bar, map credit), so labels avoid them.
+function furnitureRects(ctx, L, o, titleText, pageText) {
+  const mm = L.pxPerMM, m = 5 * mm, out = [];
+  const box = (text, size, weight) => {
+    ctx.font = `${weight} ${size * mm}px "IBM Plex Sans", system-ui, sans-serif`;
+    const pad = 1.6 * mm;
+    return { w: ctx.measureText(text).width + pad * 2, h: size * mm * 1.35 + pad * 1.2 };
+  };
+  if (o.showName && titleText) { const b = box(titleText, 4.6, 600); out.push({ x: m, y: m, w: b.w, h: b.h }); }
+  if (o.showPageNum && pageText) { const b = box(pageText, 3.4, 500); out.push({ x: L.pxW - m - b.w, y: m, w: b.w, h: b.h }); }
+  if (o.showScale) out.push({ x: m, y: L.pxH - m - 9.5 * mm, w: L.pxW * 0.2 + 22 * mm, h: 9.5 * mm });
+  const attr = BASEMAPS[o.basemap].attr;
+  if (attr) {
+    ctx.font = `400 ${2.1 * mm}px "IBM Plex Sans", system-ui, sans-serif`;
+    const tw = ctx.measureText(attr).width + 3 * mm;
+    out.push({ x: L.pxW - tw, y: L.pxH - 4.2 * mm, w: tw, h: 4.2 * mm });
+  }
+  return out;
+}
+// Spots inside a zone (page pixels) to try for its label, best first: the label point, then
+// points along horizontal lines through the zone, nearest to the label point first.
+function insideSpots(zone, L) {
+  const [ax, ay] = labelPoint(zone);
+  const anchor = [ax * L.s - L.ox, ay * L.s - L.oy];
+  const spots = [];
+  const rows = 14;
+  for (const rings of zone.proj) {
+    let minY = Infinity, maxY = -Infinity;
+    for (const [, y] of rings[0]) { minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+    for (let k = 1; k < rows; k++) {
+      const y = minY + (maxY - minY) * k / rows, xs = [];
+      for (const ring of rings) for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const [xi, yi] = ring[i], [xj, yj] = ring[j];
+        if ((yi > y) !== (yj > y)) xs.push((xj - xi) * (y - yi) / (yj - yi) + xi);
+      }
+      xs.sort((a, b) => a - b);
+      for (let i = 0; i + 1 < xs.length; i += 2) for (const f of [0.5, 0.3, 0.7]) {
+        const x = xs[i] + (xs[i + 1] - xs[i]) * f;
+        spots.push([x * L.s - L.ox, y * L.s - L.oy]);
+      }
+    }
+  }
+  spots.sort((p, q) => Math.hypot(p[0] - anchor[0], p[1] - anchor[1]) - Math.hypot(q[0] - anchor[0], q[1] - anchor[1]));
+  return { anchor, spots: [anchor, ...spots] };
+}
+function labelRect(ctx, text, size, x, y, weight) {
+  ctx.font = LABEL_FONT(size, weight);
+  const w = ctx.measureText(text).width + size * 0.5, h = size * 1.2;
+  return { x: x - w / 2, y: y - h / 2, w, h };
+}
+function drawLabel(ctx, text, size, x, y, color, weight = 700) {
+  ctx.save();
+  ctx.font = LABEL_FONT(size, weight);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+  ctx.lineWidth = Math.max(2, size * 0.22); ctx.strokeStyle = "rgba(255,255,255,0.95)";
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = color; ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+/* ---------- distinct colours for the summary page ---------- */
+// Strong, print-friendly colours that are easy to tell apart (no pale yellows that vanish on white).
+const ZONE_PALETTE = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#11a3c9", "#d81bb5", "#7fb800",
+  "#9a6324", "#469990", "#1b2a8f", "#808000", "#e6a100", "#555555"];
+function hexToLab(hex) {
+  const v = [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  const X = (v[0] * 0.4124 + v[1] * 0.3576 + v[2] * 0.1805) / 0.95047;
+  const Y = v[0] * 0.2126 + v[1] * 0.7152 + v[2] * 0.0722;
+  const Z = (v[0] * 0.0193 + v[1] * 0.1192 + v[2] * 0.9505) / 1.08883;
+  const f = (t) => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+  return [116 * f(Y) - 16, 500 * (f(X) - f(Y)), 200 * (f(Y) - f(Z))];
+}
+const PALETTE_LAB = ZONE_PALETTE.map(hexToLab);
+const labDist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+function seededRandom(seed) {
+  let t = seed >>> 0;
+  return () => { t += 0x6D2B79F5; let r = Math.imul(t ^ (t >>> 15), 1 | t); r ^= r + Math.imul(r ^ (r >>> 7), 61 | r); return ((r ^ (r >>> 14)) >>> 0) / 4294967296; };
+}
+// Zones count as neighbours if their outlines touch or come within a small gap of each other.
+function segDist2(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy;
+  let t = l ? ((px - ax) * dx + (py - ay) * dy) / l : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const ex = ax + t * dx - px, ey = ay + t * dy - py;
+  return ex * ex + ey * ey;
+}
+function ringsNear(A, B, tol) {
+  const t2 = tol * tol;
+  for (const ra of A) for (const rb of B) {
+    for (const [x, y] of ra) for (let i = 1; i < rb.length; i++) if (segDist2(x, y, rb[i - 1][0], rb[i - 1][1], rb[i][0], rb[i][1]) <= t2) return true;
+  }
+  return false;
+}
+function zonesTouch(a, b, tol) {
+  if (a.bb.maxX + tol < b.bb.minX || b.bb.maxX + tol < a.bb.minX || a.bb.maxY + tol < b.bb.minY || b.bb.maxY + tol < a.bb.minY) return false;
+  const outers = (z) => z.proj.map((rings) => rings[0]);
+  return ringsNear(outers(a), outers(b), tol) || ringsNear(outers(b), outers(a), tol);
+}
+let colourCache = { key: "", map: null };
+function distinctColours(list, seed) {
+  const key = seed + "|" + list.map((z) => z.id).join(",");
+  if (colourCache.key === key) return colourCache.map;
+  const sizes = list.map((z) => Math.max(z.bb.maxX - z.bb.minX, z.bb.maxY - z.bb.minY)).sort((a, b) => a - b);
+  const tol = (sizes[Math.floor(sizes.length / 2)] || 0) * 0.03; // 3% of a typical zone's size
+  const n = list.length, adj = list.map(() => []);
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if (zonesTouch(list[i], list[j], tol)) { adj[i].push(j); adj[j].push(i); }
+  const rnd = seededRandom(seed * 2654435761);
+  const order = ZONE_PALETTE.map((_, i) => i).sort(() => rnd() - 0.5);
+  const pick = new Array(n).fill(-1), use = new Array(ZONE_PALETTE.length).fill(0);
+  // colour the most-connected zones first, always choosing the colour furthest from its coloured neighbours
+  const idx = list.map((_, i) => i).sort((a, b) => adj[b].length - adj[a].length || rnd() - 0.5);
+  for (const i of idx) {
+    let best = -1, bestScore = -Infinity;
+    for (const c of order) {
+      const near = adj[i].filter((j) => pick[j] >= 0).map((j) => labDist(PALETTE_LAB[c], PALETTE_LAB[pick[j]]));
+      const minD = near.length ? Math.min(...near) : 200;
+      // also keep colours spread across the page, and a pinch of randomness so Shuffle gives a new look
+      const score = Math.min(minD, 100) * 2 - use[c] * 3 + rnd() * 8;
+      if (score > bestScore) { bestScore = score; best = c; }
+    }
+    pick[i] = best; use[best]++;
+  }
+  const map = new Map(list.map((z, i) => [z, ZONE_PALETTE[pick[i]]]));
+  colourCache = { key, map };
+  return map;
+}
+
+/* ---------- summary page ---------- */
+const SUMMARY_ID = "__summary";
+function summaryOpts(o) {
+  const same = o.sumSize === "same";
+  return { ...o, size: same ? o.size : o.sumSize, page: same ? o.page : PAGES[o.sumSize], orient: o.sumOrient, fill: o.sumFill };
+}
+function pointInRing(x, y, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+// A point well inside the zone for its name: the centroid if it's inside, otherwise the middle
+// of the widest inside stretch on a few horizontal lines through the zone.
+function labelPoint(zone) {
+  let best = null, bestArea = -1;
+  for (const rings of zone.proj) {
+    const r = rings[0]; let a = 0;
+    for (let i = 0, j = r.length - 1; i < r.length; j = i++) a += (r[j][0] * r[i][1] - r[i][0] * r[j][1]);
+    if (Math.abs(a) > bestArea) { bestArea = Math.abs(a); best = rings; }
+  }
+  const inZone = (x, y) => pointInRing(x, y, best[0]) && !best.slice(1).some((h) => pointInRing(x, y, h));
+  const outer = best[0];
+  let cx = 0, cy = 0, A = 0;
+  for (let i = 0, j = outer.length - 1; i < outer.length; j = i++) {
+    const f = outer[j][0] * outer[i][1] - outer[i][0] * outer[j][1];
+    A += f; cx += (outer[j][0] + outer[i][0]) * f; cy += (outer[j][1] + outer[i][1]) * f;
+  }
+  if (Math.abs(A) > 1e-18) { cx /= 3 * A; cy /= 3 * A; if (inZone(cx, cy)) return [cx, cy]; }
+  let minY = Infinity, maxY = -Infinity;
+  for (const [, y] of outer) { minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+  let pick = null, pickW = -1;
+  for (let k = 1; k <= 9; k++) {
+    const y = minY + (maxY - minY) * k / 10, xs = [];
+    for (const ring of best) for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      if ((yi > y) !== (yj > y)) xs.push((xj - xi) * (y - yi) / (yj - yi) + xi);
+    }
+    xs.sort((a, b) => a - b);
+    for (let i = 0; i + 1 < xs.length; i += 2) if (xs[i + 1] - xs[i] > pickW) { pickW = xs[i + 1] - xs[i]; pick = [(xs[i] + xs[i + 1]) / 2, y]; }
+  }
+  return pick || [(zone.bb.minX + zone.bb.maxX) / 2, (zone.bb.minY + zone.bb.maxY) / 2];
+}
+const summaryDpi = (o, dpi) => Math.min(dpi, 10000 / (Math.max(...summaryOpts(o).page) / 25.4));
+async function renderSummary(list, o0, dpi) {
+  const o = summaryOpts(o0);
+  dpi = summaryDpi(o0, dpi); // browsers can't hold huge single images
+  const bb = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (const z of list) {
+    bb.minX = Math.min(bb.minX, z.bb.minX); bb.minY = Math.min(bb.minY, z.bb.minY);
+    bb.maxX = Math.max(bb.maxX, z.bb.maxX); bb.maxY = Math.max(bb.maxY, z.bb.maxY);
+  }
+  const L = layout({ bb }, o, dpi);
+  const c = document.createElement("canvas"); c.width = L.pxW; c.height = L.pxH;
+  const ctx = c.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
+  ctx.fillStyle = o.basemap === "none" ? "#ffffff" : "#eceeea"; ctx.fillRect(0, 0, L.pxW, L.pxH);
+  const failed = await drawBase(ctx, L, o);
+  const mm = L.pxPerMM, lw = o.lineMM * mm;
+
+  if (o.fade > 0) {
+    ctx.beginPath(); ctx.rect(0, 0, L.pxW, L.pxH);
+    for (const z of list) tracePath(ctx, z, L);
+    ctx.fillStyle = `rgba(255,255,255,${o.fade})`; ctx.fill("evenodd");
+  }
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  const colours = o.sumColors === "distinct" ? distinctColours(list, o.sumSeed) : null;
+  // default: the KML's own colour for each zone, falling back to the zone outline colour
+  const colOf = (z) => colours ? colours.get(z) : (z.color || o.color);
+  const perZone = !!colours || list.some((z) => z.color && z.color !== o.color);
+  for (const z of list) {
+    ctx.beginPath(); tracePath(ctx, z, L);
+    if (o.sumFillOpacity > 0) { ctx.fillStyle = hexToRgba(colOf(z), o.sumFillOpacity); ctx.fill("evenodd"); }
+  }
+  for (const z of list) {
+    if (o.lineOpacity <= 0) break;
+    const col = colOf(z);
+    ctx.beginPath(); tracePath(ctx, z, L);
+    if (perZone) {
+      // draw each outline just inside its own zone, so a shared border shows both zones' colours side by side
+      ctx.save(); ctx.clip("evenodd");
+      ctx.strokeStyle = hexToRgba(col, o.lineOpacity); ctx.lineWidth = lw * 2; ctx.stroke();
+      ctx.restore();
+    } else {
+      ctx.strokeStyle = `rgba(255,255,255,${0.85 * o.lineOpacity})`; ctx.lineWidth = lw + 0.8 * mm; ctx.stroke();
+      ctx.strokeStyle = hexToRgba(col, o.lineOpacity); ctx.lineWidth = lw; ctx.stroke();
+    }
+  }
+
+  // zone names: each tries spots inside its zone, then smaller sizes, then just outside with a leader line
+  const titleText = `${exportBase()} · ${list.length} zone${list.length === 1 ? "" : "s"}`;
+  const placer = makePlacer(L.pxW, L.pxH, furnitureRects(ctx, L, o, titleText, null));
+  const minSize = 1.8 * mm;
+  const items = list.map((z) => {
+    const zw = (z.bb.maxX - z.bb.minX) * L.s, zh = (z.bb.maxY - z.bb.minY) * L.s;
+    let size;
+    if (o.sumLabel > 0) size = o.sumLabel * mm;
+    else {
+      ctx.font = LABEL_FONT(100);
+      const w100 = ctx.measureText(z.name).width || 100;
+      size = clamp(Math.min(zw * 0.8 / w100 * 100, zh * 0.4), 2.2 * mm, 12 * mm);
+    }
+    return { z, size, area: zw * zh, ...insideSpots(z, L) };
+  });
+  // small zones first: they have the fewest spots, bigger zones can move their names around them
+  items.sort((a, b) => a.area - b.area);
+  const scales = o.sumLabel > 0 ? [1, 0.85, 0.7] : [1, 0.85, 0.72, 0.6, 0.5];
+  const placed = [];
+  for (const it of items) {
+    let done = null;
+    for (const sc of scales) {
+      const size = Math.max(minSize, it.size * sc);
+      for (const [x, y] of it.spots) {
+        const r = labelRect(ctx, it.z.name, size, x, y);
+        if (placer.fits(r)) { done = { x, y, size, r }; break; }
+      }
+      if (done || size === minSize) break;
+    }
+    if (!done) { // outside the zone with a leader line
+      const [ax, ay] = it.anchor;
+      outer: for (const size of [Math.max(minSize, it.size * 0.85), minSize]) {
+        for (const rad of [1.2, 2, 3, 4.5, 6.5, 9, 13, 18, 25, 35, 50]) {
+          for (let deg = 0; deg < 360; deg += 15) {
+            const x = ax + Math.cos(deg * Math.PI / 180) * rad * size * 2, y = ay + Math.sin(deg * Math.PI / 180) * rad * size;
+            const r = labelRect(ctx, it.z.name, size, x, y);
+            if (placer.fits(r)) { done = { x, y, size, r, leader: true }; break outer; }
+          }
+        }
+      }
+    }
+    if (!done) { // nowhere free: use the spot that overlaps least, at the smallest size
+      let best = null, bestA = Infinity;
+      for (const [x, y] of it.spots.slice(0, 40)) {
+        const r = labelRect(ctx, it.z.name, minSize, x, y), a = placer.overlap(r);
+        if (a < bestA) { bestA = a; best = { x, y, size: minSize, r }; }
+      }
+      done = best;
+    }
+    placer.add(done.r);
+    placed.push({ ...done, it });
+  }
+  for (const p of placed) if (p.leader) {
+    const [ax, ay] = p.it.anchor;
+    ctx.save();
+    ctx.strokeStyle = "rgba(26,31,38,0.8)"; ctx.lineWidth = Math.max(1, 0.25 * mm);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(clamp(ax, p.r.x, p.r.x + p.r.w), clamp(ay, p.r.y, p.r.y + p.r.h)); ctx.stroke();
+    ctx.fillStyle = "rgba(26,31,38,0.9)"; ctx.beginPath(); ctx.arc(ax, ay, Math.max(1.5, 0.6 * mm), 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  for (const p of placed) drawLabel(ctx, p.it.z.name, p.size, p.x, p.y, "#1a1f26");
+
+  if (o.showName) labelBox(ctx, titleText, 5 * mm, 5 * mm, mm, { size: 4.6 });
+  drawFurniture(ctx, L, o);
+  return { canvas: c, L, failed };
+}
+
+/* ================= Leaflet map ================= */
+const map = L.map("map", { zoomControl: true, preferCanvas: false }).setView([-33.815, 151.007], 15);
+let baseLayer = null, zoneLayer = L.layerGroup().addTo(map), frameLayer = null;
+const polyById = {};
+function setBaseLayer() {
+  const o = readOpts(), bm = BASEMAPS[o.basemap];
+  if (baseLayer) map.removeLayer(baseLayer);
+  baseLayer = null;
+  if (bm.vector) {
+    // the on-screen map uses OpenStreetMap tiles; the proof and exports use the chosen vector style
+    const osm = BASEMAPS.osm;
+    baseLayer = L.tileLayer(osm.url, { maxZoom: 19, attribution: osm.attr, crossOrigin: true }).addTo(map);
+  } else if (bm.url) {
+    baseLayer = L.tileLayer(bm.url.replace("{s}", bm.sub ? "{s}" : "a"), { subdomains: bm.sub || "a", maxZoom: bm.max, attribution: bm.attr, crossOrigin: true }).addTo(map);
+  }
+}
+function drawZonesOnMap() {
+  const o = readOpts();
+  zoneLayer.clearLayers();
+  for (const z of zones) {
+    const latlngs = z.polys.map((rings) => rings.map((r) => r.map(([lon, lat]) => [lat, lon])));
+    const sel = z.id === selectedId;
+    const p = L.polygon(latlngs, {
+      color: zoneColor(z, o), weight: sel ? 4 : 2, opacity: z.include ? 1 : 0.4,
+      fillOpacity: sel ? 0.18 : 0.06, dashArray: z.include ? null : "4 4"
+    }).bindTooltip(z.name, { sticky: true });
+    p.on("click", () => selectZone(z.id, false));
+    p.addTo(zoneLayer);
+    polyById[z.id] = p;
+  }
+}
+function drawFrame(L_) {
+  if (frameLayer) { map.removeLayer(frameLayer); frameLayer = null; }
+  if (!L_) return;
+  const [lon0, lat0] = unproject(L_.ox / L_.s, L_.oy / L_.s);
+  const [lon1, lat1] = unproject((L_.ox + L_.pxW) / L_.s, (L_.oy + L_.pxH) / L_.s);
+  frameLayer = L.rectangle([[lat0, lon0], [lat1, lon1]], { color: getComputedStyle(document.documentElement).getPropertyValue("--reg").trim() || "#c81f66", weight: 1.5, dashArray: "6 5", fill: false, interactive: false }).addTo(map);
+}
+function fitAll() {
+  if (!zones.length) return;
+  const b = L.featureGroup(Object.values(polyById)).getBounds();
+  // keep the zones clear of the proof card pinned over the right of the map
+  const proof = document.querySelector(".proof"), pr = proof && getComputedStyle(proof).position === "absolute" ? proof.offsetWidth + 28 : 30;
+  if (b.isValid()) { map.stop(); map.fitBounds(b, { paddingTopLeft: [30, 30], paddingBottomRight: [pr, 30], animate: false }); }
+}
+
+/* ================= zone list ================= */
+function renderList() {
+  const o = readOpts();
+  const ul = $("#zoneList");
+  ul.innerHTML = "";
+  const list = orderedZones(o);
+  if (!list.length) { ul.innerHTML = '<li class="empty">No polygon zones found in this file.</li>'; }
+  if (list.length && o.showSummary) {
+    const li = document.createElement("li");
+    li.className = selectedId === SUMMARY_ID ? "sel" : "";
+    const spacer = document.createElement("span");
+    const idx = document.createElement("span"); idx.className = "idx"; idx.textContent = "00";
+    const nm = document.createElement("span"); nm.className = "zn"; nm.textContent = "Summary page (all zones)";
+    li.append(spacer, idx, nm);
+    li.addEventListener("click", () => selectZone(SUMMARY_ID, true));
+    ul.append(li);
+  }
+  let n = 0;
+  for (const z of list) {
+    const li = document.createElement("li");
+    if (z.include) n++;
+    li.className = (z.id === selectedId ? "sel " : "") + (z.include ? "" : "off");
+    li.dataset.id = z.id;
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = z.include; cb.id = "inc_" + z.id; cb.setAttribute("aria-label", "Include " + z.name);
+    cb.addEventListener("click", (e) => e.stopPropagation());
+    cb.addEventListener("change", () => { z.include = cb.checked; renderList(); drawZonesOnMap(); schedulePreview(); });
+    const idx = document.createElement("span"); idx.className = "idx"; idx.textContent = z.include ? String(n).padStart(2, "0") : "––";
+    const nm = document.createElement("span"); nm.className = "zn"; nm.textContent = z.name; nm.title = z.name;
+    li.append(cb, idx, nm);
+    li.addEventListener("click", () => selectZone(z.id, true));
+    ul.append(li);
+  }
+  const inc = zones.filter((z) => z.include).length;
+  $("#sum-zones").textContent = zones.length ? `${inc} of ${zones.length} selected` : "";
+  $("#exportPdf").disabled = $("#exportPng").disabled = !inc || exporting;
+}
+function selectZone(id, zoom) {
+  selectedId = id;
+  renderList(); drawZonesOnMap();
+  const p = polyById[id];
+  if (zoom && id === SUMMARY_ID) fitAll();
+  else if (zoom && p) map.fitBounds(p.getBounds(), { padding: [60, 60], maxZoom: 18 });
+  schedulePreview();
+}
+
+/* ================= preview ================= */
+let previewToken = 0, previewTimer = null, lastPreview = null;
+function schedulePreview() { clearTimeout(previewTimer); previewTimer = setTimeout(renderPreview, 220); }
+function pagePosition(zone, o) {
+  const inc = orderedZones(o).filter((z) => z.include);
+  const i = inc.indexOf(zone);
+  return { pos: i >= 0 ? i + 1 : null, total: inc.length };
+}
+async function renderPreview() {
+  const o = readOpts();
+  const zone = zones.find((z) => z.id === selectedId);
+  const canvas = $("#proofCanvas");
+  if (selectedId === SUMMARY_ID && o.showSummary) {
+    const inc = orderedZones(o).filter((z) => z.include);
+    if (!inc.length) { $("#proofTitle").textContent = "Summary page"; $("#spec").textContent = "Select at least one zone."; drawFrame(null); return; }
+    const so = summaryOpts(o);
+    const token = ++previewToken;
+    $("#proofTitle").textContent = "Summary page";
+    $("#proofBusy").hidden = false;
+    const r = await renderSummary(inc, o, 1100 / (Math.max(...so.page) / 25.4));
+    if (token !== previewToken) return;
+    $("#proofBusy").hidden = true;
+    canvas.width = r.canvas.width; canvas.height = r.canvas.height;
+    canvas.getContext("2d").drawImage(r.canvas, 0, 0);
+    drawFrame(r.L);
+    $("#spec").innerHTML =
+      `<b>${so.sumSize === "same" ? so.size : so.sumSize}</b> · ${fmt(r.L.w)} × ${fmt(r.L.h)} mm · ${r.L.orient}<br>` +
+      `${inc.length} zones fill <b>${so.fill}%</b><br>` +
+      `Output ${Math.round(r.L.w / 25.4 * summaryDpi(o, o.dpi))} × ${Math.round(r.L.h / 25.4 * summaryDpi(o, o.dpi))} px at ${Math.round(summaryDpi(o, o.dpi))} dpi` +
+      (r.failed ? `<br><span style="color:var(--danger)">${r.failed} map tiles didn't load</span>` : "");
+    return;
+  }
+  if (!zone) {
+    $("#proofTitle").textContent = "No zone selected"; $("#spec").textContent = "Pick a zone from the list or the map.";
+    drawFrame(null); lastPreview = null; return;
+  }
+  const token = ++previewToken;
+  const maxMM = Math.max(...o.page);
+  const dpi = 1100 / (maxMM / 25.4);
+  $("#proofTitle").textContent = zone.name;
+  $("#proofBusy").hidden = false;
+  const { pos, total } = pagePosition(zone, o);
+  const r = await renderZone(zone, pos, pos ? total : 0, o, dpi);
+  if (token !== previewToken) return;
+  $("#proofBusy").hidden = true;
+  canvas.width = r.canvas.width; canvas.height = r.canvas.height;
+  canvas.getContext("2d").drawImage(r.canvas, 0, 0);
+  drawFrame(r.L);
+  lastPreview = { zone, pos, total };
+  const L_ = r.L;
+  const sizeName = o.size === "Custom" ? "Custom" : o.size;
+  const pxOut = layout(zone, o, o.dpi);
+  $("#spec").innerHTML =
+    `<b>${sizeName}</b> · ${fmt(L_.w)} × ${fmt(L_.h)} mm · ${L_.orient}<br>` +
+    `Zone fills <b>${o.fill}%</b> · map zoom ${BASEMAPS[o.basemap].vector ? fmt(Math.log2(L_.s / (2 * labelScale(o) * L_.dpi / 96))) : L_.zt}<br>` +
+    `Output ${pxOut.pxW} × ${pxOut.pxH} px at ${o.dpi} dpi` +
+    (r.failed ? `<br><span style="color:var(--danger)">${r.failed} map tiles didn't load</span>` : "");
+}
+const fmt = (v) => (Math.round(v * 10) / 10).toString();
+
+/* ================= export ================= */
+let exporting = false;
+function setProgress(f, msg) { $("#bar").style.width = (f * 100).toFixed(1) + "%"; $("#status").textContent = msg || ""; }
+function saveBlob(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.append(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+}
+const canvasBlob = (c, type, q) => new Promise((res) => c.toBlob(res, type, q));
+const baseName = () => sourceName === "sample" ? "Sample zones" : safeName(sourceName.replace(/\.(kml|kmz)$/i, ""));
+// the name typed in the export box, without any .pdf/.zip/.png the user added; falls back to the input file name
+const exportBase = () => safeName(($("#exportName").value || "").trim().replace(/\.(pdf|zip|png)$/i, "")) || baseName();
+function updateSuffix() {
+  const box = $("#exportName");
+  if (!box.value.trim()) box.value = baseName();
+}
+
+async function exportAll(kind) {
+  if (exporting) return;
+  const o = readOpts();
+  const list = orderedZones(o).filter((z) => z.include);
+  if (!list.length) { toast("Select at least one zone to export.", true); return; }
+  exporting = true; renderList();
+  let failed = 0;
+  try {
+    let pdf = null; const zip = kind === "png" ? new JSZip() : null;
+    const jobs = (o.showSummary ? [null] : []).concat(list); // null = summary page
+    for (let j = 0; j < jobs.length; j++) {
+      const z = jobs[j];
+      const i = o.showSummary ? j - 1 : j;
+      setProgress(j / jobs.length, z ? `Rendering page ${i + 1} of ${list.length}: ${z.name}` : "Rendering summary page…");
+      const r = z ? await renderZone(z, i + 1, list.length, o, o.dpi) : await renderSummary(list, o, o.dpi);
+      failed += r.failed;
+      if (kind === "pdf") {
+        const W = r.L.w, H = r.L.h, orient = W > H ? "l" : "p";
+        if (!pdf) pdf = new jspdf.jsPDF({ orientation: orient, unit: "mm", format: [W, H], compress: true });
+        else pdf.addPage([W, H], orient);
+        pdf.addImage(r.canvas.toDataURL("image/jpeg", 0.9), "JPEG", 0, 0, W, H, undefined, "FAST");
+      } else {
+        const blob = await canvasBlob(r.canvas, "image/png");
+        zip.file(z ? `${String(i + 1).padStart(2, "0")} - ${safeName(z.name)}.png` : "00 - Summary.png", blob);
+      }
+      await sleep(0);
+    }
+    setProgress(1, "Saving file…");
+    if (kind === "pdf") {
+      pdf.setProperties({ title: exportBase() });
+      pdf.save(`${exportBase()}.pdf`);
+    } else {
+      saveBlob(await zip.generateAsync({ type: "blob" }), `${exportBase()}.zip`);
+    }
+    setProgress(1, `Exported ${list.length} zone page${list.length === 1 ? "" : "s"}${o.showSummary ? " plus the summary page" : ""}.`);
+    if (failed) toast(`${failed} map tiles didn't load, so parts of some pages are blank grey. Check your connection and export again.`, true);
+  } catch (e) {
+    console.error(e);
+    setProgress(0, "");
+    toast("Export stopped: " + (e && e.message ? e.message : "something went wrong.") + " Try a lower resolution if pages are very large.", true);
+  } finally {
+    exporting = false; renderList();
+  }
+}
+async function savePagePng() {
+  const o = readOpts();
+  if (selectedId === SUMMARY_ID && o.showSummary) {
+    const inc = orderedZones(o).filter((z) => z.include);
+    if (!inc.length) return;
+    setProgress(0.5, "Rendering summary page…");
+    const r = await renderSummary(inc, o, o.dpi);
+    saveBlob(await canvasBlob(r.canvas, "image/png"), "Summary.png");
+    setProgress(1, "Saved the summary page.");
+    if (r.failed) toast(`${r.failed} map tiles didn't load on this page.`, true);
+    return;
+  }
+  const zone = zones.find((z) => z.id === selectedId);
+  if (!zone) return;
+  const { pos, total } = pagePosition(zone, o);
+  setProgress(0.5, `Rendering ${zone.name}…`);
+  const r = await renderZone(zone, pos, pos ? total : 0, o, o.dpi);
+  saveBlob(await canvasBlob(r.canvas, "image/png"), `${safeName(zone.name)}.png`);
+  setProgress(1, `Saved ${zone.name}.`);
+  if (r.failed) toast(`${r.failed} map tiles didn't load on this page.`, true);
+}
+
+/* ================= loading files ================= */
+function loadZones(list, name) {
+  zones = list; sourceName = name;
+  $("#exportName").value = baseName();
+  selectedId = orderedZones()[0] ? orderedZones()[0].id : null;
+  for (const k in polyById) delete polyById[k];
+  drawZonesOnMap(); renderList(); fitAll(); schedulePreview();
+}
+async function openFile(file) {
+  if (!file) return;
+  if (!/\.(kml|kmz)$/i.test(file.name)) { toast("That isn't a KML or KMZ file.", true); return; }
+  try {
+    const text = await readFile(file);
+    const list = parseKML(text);
+    if (!list.length) { toast("No polygon zones found in this file. Zones need to be polygons, not lines or pins.", true); return; }
+    $("#sampleNote").hidden = true;
+    $("#fileName").textContent = `${file.name} · ${list.length} zone${list.length === 1 ? "" : "s"}`;
+    loadZones(list, file.name);
+    setProgress(0, "");
+  } catch (e) {
+    console.error(e); toast(e.message || "Couldn't read that file.", true);
+  }
+}
+
+/* ================= wiring ================= */
+// capture the page's built-in defaults before saved settings are applied, for "Reset all settings"
+const DEFAULTS = {};
+for (const id of SAVED_IDS) { const el = $("#" + id); DEFAULTS[id] = el.type === "checkbox" ? el.checked : el.value; }
+loadSettings();
+$("#customRow").hidden = $("#pageSize").value !== "Custom";
+$("#fileInput").addEventListener("change", (e) => { openFile(e.target.files[0]); e.target.value = ""; });
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => { e.preventDefault(); dragDepth++; $("#drop").classList.add("over"); });
+window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("#drop").classList.remove("over"); } });
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => { e.preventDefault(); dragDepth = 0; $("#drop").classList.remove("over"); openFile(e.dataTransfer.files[0]); });
+
+$("#fill").addEventListener("input", () => { $("#fillNum").value = $("#fill").value; onOpt(); });
+$("#fillNum").addEventListener("input", () => { $("#fill").value = clamp(num($("#fillNum"), 80), 20, 100); onOpt(); });
+$("#pageSize").addEventListener("change", () => { $("#customRow").hidden = $("#pageSize").value !== "Custom"; });
+$("#basemap").addEventListener("change", setBaseLayer);
+$("#sortBy").addEventListener("change", renderList);
+for (const el of document.querySelectorAll(".panel input, .panel select")) {
+  if (el.id === "fileInput" || el.id === "fill" || el.id === "fillNum" || el.id.startsWith("inc_")) continue;
+  el.addEventListener(el.type === "number" ? "input" : "change", onOpt);
+}
+function syncSections() {
+  $("#otherOpts").hidden = !$("#showOthers").checked;
+  $("#insetOpts").hidden = !$("#showInset").checked;
+  $("#summaryOpts").hidden = !$("#showSummary").checked;
+  if (!$("#showSummary").checked && selectedId === SUMMARY_ID) { const f = orderedZones()[0]; selectedId = f ? f.id : null; }
+  renderList();
+}
+function onOpt() { syncSections(); updateSummaries(); saveSettings(); drawZonesOnMap(); schedulePreview(); }
+
+/* one-line summaries shown on collapsed sections */
+const optText = (id) => { const el = $("#" + id); return el.options[el.selectedIndex].text; };
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const swatch = (c) => `<span class="sw" style="background:${esc(c)}"></span>`;
+const OFF = '<span class="off">Off</span>';
+function updateSummaries() {
+  const o = readOpts();
+  const orient = { auto: "auto", portrait: "portrait", landscape: "landscape" }[o.orient];
+  $("#sum-page").textContent = `${o.size === "Custom" ? `${fmt(o.page[0])} × ${fmt(o.page[1])} mm` : o.size} · ${orient} · ${o.fill}% · ${o.dpi} dpi`;
+  $("#sum-map").textContent = `${optText("basemap")} · ${optText("textSize").toLowerCase()} labels · fade ${Math.round(o.fade * 100)}%`;
+  $("#sum-style").innerHTML = `${o.useKml ? "KML colours · " : swatch(o.color)}${fmt(o.lineMM)} mm · fill ${Math.round(o.fillOpacity * 100)}%`;
+  $("#sum-others").innerHTML = o.showOthers
+    ? `${o.otherUseKml ? "KML colours · " : swatch(o.otherColor)}${o.otherDashed ? "Dashed" : "Solid"} · ${Math.round(o.otherLineOpacity * 100)}%${o.otherNames ? " · names" : ""}`
+    : OFF;
+  const lab = [o.showName && "Name", o.showPageNum && "Page no.", o.showScale && "Scale bar"].filter(Boolean);
+  $("#sum-labels").innerHTML = lab.length ? esc(lab.join(" · ")) : "None";
+  $("#sum-inset").innerHTML = o.showInset ? `${esc(optText("insetCorner").replace(/ \(.*\)/, ""))} · ${fmt(o.insetZoom)}× · ${o.insetSize}%` : OFF;
+  $("#shuffleRow").hidden = o.sumColors !== "distinct";
+  $("#sum-summary").innerHTML = o.showSummary
+    ? `${o.sumSize === "same" ? "Same size" : o.sumSize} · ${o.sumOrient} · ${o.sumFill}%`
+    : OFF;
+}
+
+/* remember which sections are open */
+const SEC_KEY = "kmlZonePictures.sections";
+try {
+  const saved = JSON.parse(localStorage.getItem(SEC_KEY) || "null");
+  if (saved) for (const d of document.querySelectorAll(".sec")) if (d.dataset.sec in saved) d.open = !!saved[d.dataset.sec];
+} catch (e) { /* storage unavailable */ }
+function saveSections() {
+  try {
+    const o = {}; for (const d of document.querySelectorAll(".sec")) o[d.dataset.sec] = d.open;
+    localStorage.setItem(SEC_KEY, JSON.stringify(o));
+  } catch (e) { /* storage unavailable */ }
+}
+for (const d of document.querySelectorAll(".sec")) d.addEventListener("toggle", saveSections);
+$("#collapseAll").addEventListener("click", () => { for (const d of document.querySelectorAll(".sec")) d.open = false; saveSections(); });
+
+/* reset: two clicks, so a stray click doesn't wipe everything */
+let resetArmed = null;
+$("#resetAll").addEventListener("click", () => {
+  const btn = $("#resetAll");
+  if (!resetArmed) {
+    btn.textContent = "Click again to reset";
+    resetArmed = setTimeout(() => { btn.textContent = "Reset all settings"; resetArmed = null; }, 3000);
+    return;
+  }
+  clearTimeout(resetArmed); resetArmed = null; btn.textContent = "Reset all settings";
+  for (const id of SAVED_IDS) { const el = $("#" + id); if (el.type === "checkbox") el.checked = DEFAULTS[id]; else el.value = DEFAULTS[id]; }
+  $("#oAuto").checked = true;
+  $("#fill").value = $("#fillNum").value;
+  $("#customRow").hidden = $("#pageSize").value !== "Custom";
+  setBaseLayer(); onOpt(); renderList();
+  toast("Settings reset to defaults.");
+});
+
+syncSections();
+updateSummaries();
+$("#allOn").addEventListener("click", () => { zones.forEach((z) => (z.include = true)); renderList(); drawZonesOnMap(); schedulePreview(); });
+$("#allOff").addEventListener("click", () => { zones.forEach((z) => (z.include = false)); renderList(); drawZonesOnMap(); schedulePreview(); });
+$("#exportPdf").addEventListener("click", () => exportAll("pdf"));
+$("#exportPng").addEventListener("click", () => exportAll("png"));
+$("#savePage").addEventListener("click", savePagePng);
+$("#shuffleColors").addEventListener("click", () => {
+  $("#sumSeed").value = 1 + Math.floor(Math.random() * 1e9);
+  onOpt();
+  if (selectedId !== SUMMARY_ID) selectZone(SUMMARY_ID, false); // show the result
+});
+$("#exportName").addEventListener("blur", updateSuffix); // an emptied box goes back to the input file name
+
+setBaseLayer();
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => {
+  if (!zones.length) loadZones(parseKML(SAMPLE_KML), "sample"); // a file opened in the meantime wins
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "name": "kml-master",
+  "version": "1.0.0",
+  "description": "KML zone tools: build, number, merge, count and print map zones",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build:data": "node scripts/build-data.mjs --out site/build/data",
+    "serve": "npx --yes http-server site -p 8080 -c-1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TymonDomanko/KML-Master.git"
+  },
+  "author": "Tymon Domanko",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/TymonDomanko/KML-Master/issues"
+  },
+  "homepage": "https://tymondomanko.github.io/KML-Master/",
+  "devDependencies": {
+    "@turf/turf": "^7.4.0",
+    "mapshaper": "^0.7.85",
+    "topojson-client": "^3.1.0"
+  },
+  "private": true
+}

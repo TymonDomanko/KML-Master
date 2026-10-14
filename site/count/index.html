@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{var t=localStorage.getItem("kmlm-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<title>Count letterboxes · KML Master</title>
+<meta name="description" content="Count the mailboxes inside each delivery zone from a KML or KMZ. Addresses are fetched for you.">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+/* Count: tool-specific styles. Shared look comes from ../kit/kit.css */
+:root{
+  --bg:var(--kit-paper); --surface:var(--kit-surface); --ink:var(--kit-ink); --muted:var(--kit-muted); --line:var(--kit-line);
+  --accent:var(--kit-accent); --accent-ink:var(--kit-accent-ink); --accent-soft:var(--kit-accent-soft);
+  --zone:var(--kit-zone); --zone-fill:var(--kit-zone-fill);
+  --house:#1f7a6d; --apt:#7a5aa6; --biz:#b77712;
+  --warn-bg:#fff4dc; --warn-ink:#6b4a00; --land:var(--kit-stage);
+  --display:var(--kit-cond); --body:var(--kit-sans); --mono:var(--kit-mono);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--house:#4cc3b0;--apt:#b495e0;--biz:#e8a93f;--warn-bg:#33290f;--warn-ink:#f1d48a}}
+:root[data-theme="dark"]{--house:#4cc3b0;--apt:#b495e0;--biz:#e8a93f;--warn-bg:#33290f;--warn-ink:#f1d48a}
+
+.step{display:flex;flex-direction:column;gap:9px;min-width:0}
+.step p{margin:0;color:var(--muted);font-size:13px;line-height:1.45}
+.row{display:flex;flex-wrap:wrap;gap:8px}
+details{font-size:13px} summary{cursor:pointer;color:var(--accent);font-weight:600}
+.filters{display:flex;flex-direction:column;gap:9px}
+.chk{display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer}
+.chk input{width:17px;height:17px;margin:0}
+.sw{width:10px;height:10px;border-radius:2px;flex:none;display:inline-block}
+.sw.h{background:var(--house)} .sw.a{background:var(--apt)} .sw.b{background:var(--biz)}
+.chk small{color:var(--muted);margin-left:auto;font-family:var(--mono);font-size:12.5px}
+.progress{height:4px;border-radius:3px;background:var(--kit-sunken);overflow:hidden}
+.progress i{display:block;height:100%;width:4%;background:var(--accent);transition:width .4s}
+
+/* stage */
+.total{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0}
+.total .big{font:700 30px/1 var(--kit-cond);font-variant-numeric:tabular-nums;color:var(--ink)}
+.total .lbl{font:600 14px/1.2 var(--kit-cond)}
+.total .what{color:var(--muted);font-size:13px}
+#map{position:absolute;inset:0;background:var(--land);z-index:0}
+#map.dark-tiles .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.95) contrast(.85) saturate(.6)}
+.leaflet-tooltip.zlabel{background:transparent;border:0;box-shadow:none;padding:0;font:700 13px var(--kit-cond);color:var(--zone);text-shadow:0 0 3px var(--surface),0 0 3px var(--surface),0 0 3px var(--surface)}
+.leaflet-tooltip.zlabel::before{display:none}
+.mapempty{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:16px;z-index:500;pointer-events:none;font-weight:600;color:var(--ink)}
+.mapempty span{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 14px;box-shadow:var(--kit-shadow)}
+.banner{background:var(--warn-bg);color:var(--warn-ink);border-radius:6px;padding:10px 14px;font-size:13.5px}
+td.off{color:var(--muted);text-decoration:line-through;text-decoration-color:var(--line)}
+td.count{font-weight:700}
+td.age{color:var(--muted);font-size:12.5px}
+.kit-table td:not(:first-child),.kit-table th:not(:first-child){text-align:right;font-variant-numeric:tabular-nums}
+.kit-table td:not(:first-child){font-family:var(--mono);font-size:13px}
+.zname{display:flex;align-items:center;gap:8px}
+.zname i{width:10px;height:10px;border:2px solid var(--zone);border-radius:2px;flex:none}
+.note{font-size:12px;color:var(--muted);margin:0;line-height:1.45}
+.kit-sheet-head .note{flex:1 1 300px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+<link rel="stylesheet" href="../kit/kit.css?v=dev">
+</head>
+<body class="kit" data-tool="count">
+<header class="kit-bar" id="kitBar"></header>
+<script src="../kit/kit.js?v=dev"></script>
+
+<div class="kit-app">
+  <aside class="kit-panel" aria-label="Settings">
+    <div class="kit-scroll">
+      <div class="kit-intro">
+        <h1>Count letterboxes</h1>
+        <p>Count the mailboxes inside each delivery zone. The addresses are fetched for you.</p>
+      </div>
+
+      <section class="step">
+        <div class="label"><span class="kit-step">1</span>Zones</div>
+        <label class="drop" id="zoneDrop">
+          <input type="file" id="zoneFile" data-kit-kml accept=".kml,.kmz">
+          <strong>Open KML or KMZ</strong>
+          <span>One polygon per zone. The placemark name becomes the zone name.</span>
+        </label>
+        <div class="status" id="zoneStatus">No zones loaded.</div>
+        <div class="row"><button class="btn ghost small" id="forgetZones" type="button" hidden>Forget these zones</button></div>
+      </section>
+
+      <section class="step">
+        <div class="label"><span class="kit-step">2</span>Addresses</div>
+        <p>Fetched automatically. In NSW they come from the official NSW address register, updated daily; elsewhere from OpenStreetMap. A copy is kept until the next day so the page opens quickly.</p>
+        <div class="progress" id="prog" hidden><i id="progBar"></i></div>
+        <div class="status" id="addrStatus">Load zones to fetch their addresses.</div>
+        <div class="row"><button class="btn small" id="refreshBtn" type="button">Refresh address data</button></div>
+        <details>
+          <summary>Use your own address file instead</summary>
+          <p style="margin-top:6px">A CSV with latitude and longitude columns (such as a G-NAF extract), GeoJSON, or Overpass JSON. It replaces the fetched data until you refresh. Rows with a value in a <code>flat</code>, <code>unit</code> or <code>flat_number</code> column count as apartments.</p>
+          <label class="drop" id="addrDrop" data-kit-nokml style="margin-top:8px">
+            <input type="file" id="addrFile" accept=".json,.geojson,.csv,.txt,.psv" multiple>
+            <strong>Choose address files</strong>
+            <span>Select several at once and they're merged.</span>
+          </label>
+          <div class="row" style="margin-top:8px"><button class="btn ghost small" id="clearAddr" type="button">Clear address data</button></div>
+        </details>
+      </section>
+
+      <section class="step">
+        <div class="label"><span class="kit-step">3</span>Count these</div>
+        <div class="filters">
+          <label class="chk"><input type="checkbox" id="fHouse" checked><span class="sw h"></span>Houses<small id="nHouse">0</small></label>
+          <label class="chk"><input type="checkbox" id="fApt"><span class="sw a"></span>Apartments and units<small id="nApt">0</small></label>
+          <label class="chk"><input type="checkbox" id="fBiz" checked><span class="sw b"></span>Businesses<small id="nBiz">0</small></label>
+        </div>
+        <p>Apartments count each unit where the building's unit count is known, otherwise one per address.</p>
+      </section>
+    </div>
+
+    <div class="kit-actions">
+      <div class="kit-btns">
+        <button class="btn primary" id="csvBtn" type="button">Export CSV</button>
+        <button class="btn" id="copyBtn" type="button">Copy table</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="kit-stage kit-split">
+    <div class="kit-strip">
+      <div class="total">
+        <span class="lbl">Total mailboxes</span>
+        <span class="big" id="bigTotal">0</span>
+        <span class="what" id="bigWhat"></span>
+      </div>
+      <div class="kit-legend">
+        <span><i class="sw h"></i>House</span>
+        <span><i class="sw a"></i>Apartment</span>
+        <span><i class="sw b"></i>Business</span>
+        <span title="Faded dots are filtered out or outside every zone; larger dots are buildings with several units.">Click a dot for its address</span>
+      </div>
+    </div>
+
+    <div class="kit-mapbox">
+      <div id="map" aria-label="Map of zones and address points"></div>
+      <div class="mapempty" id="mapEmpty"><span>Open a KML or KMZ of your zones to start.</span></div>
+    </div>
+
+    <section class="kit-sheet" aria-label="Count per zone">
+      <div class="kit-sheet-head">
+        <p class="note" id="overlapNote"></p>
+        <p class="note">Addresses: NSW Spatial Services address register in NSW, otherwise &copy; OpenStreetMap contributors, whose coverage varies by suburb. "Latest update" is the newest date any address in the zone was added or changed in the register.</p>
+      </div>
+      <div class="kit-sheet-body">
+        <table class="kit-table">
+          <thead><tr><th>Zone</th><th>Houses</th><th>Apartments</th><th>Businesses</th><th>Mailboxes</th><th title="The most recent date any counted address in this zone was added or changed in the NSW address register">Latest update</th></tr></thead>
+          <tbody id="tbody"></tbody>
+          <tfoot id="tfoot"></tfoot>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $=id=>document.getElementById(id);
+const APT_BUILDINGS=/^(apartments|flats|dormitory)$/i;
+const BIZ_BUILDINGS=/^(commercial|retail|office|industrial|warehouse|supermarket|school|church|hospital|hotel|kiosk|civic|public|government|university|college|train_station|fire_station|service)$/i;
+const BIZ_KEYS=["shop","amenity","office","craft","healthcare","tourism","leisure","club"];
+
+let zones=[];        // {name, polys:[[outer,...holes]], bbox}
+let records=[];      // {lat,lon,cls:'house'|'apt'|'biz',w}
+let lastRows=[];
+
+/* ---------- geometry ---------- */
+function ringBBox(r){let a=[Infinity,Infinity,-Infinity,-Infinity];for(const[x,y]of r){if(x<a[0])a[0]=x;if(y<a[1])a[1]=y;if(x>a[2])a[2]=x;if(y>a[3])a[3]=y}return a}
+function inRing(x,y,r){let c=false;for(let i=0,j=r.length-1;i<r.length;j=i++){const[xi,yi]=r[i],[xj,yj]=r[j];if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi))c=!c}return c}
+function inPoly(x,y,p){if(!inRing(x,y,p[0]))return false;for(let k=1;k<p.length;k++)if(inRing(x,y,p[k]))return false;return true}
+function inZone(x,y,z){const b=z.bbox;if(x<b[0]||x>b[2]||y<b[1]||y>b[3])return false;return z.polys.some(p=>inPoly(x,y,p))}
+function centroid(r){let x=0,y=0;for(const p of r){x+=p[0];y+=p[1]}return[x/r.length,y/r.length]}
+function mergeBBox(bs){return bs.reduce((a,b)=>[Math.min(a[0],b[0]),Math.min(a[1],b[1]),Math.max(a[2],b[2]),Math.max(a[3],b[3])],[Infinity,Infinity,-Infinity,-Infinity])}
+
+/* ---------- KML / KMZ ---------- */
+function parseCoords(t){return t.trim().split(/\s+/).map(s=>s.split(",").map(Number)).filter(c=>c.length>=2&&isFinite(c[0])&&isFinite(c[1])).map(c=>[c[0],c[1]])}
+function byTag(el,tag){return Array.from(el.getElementsByTagNameNS("*",tag))}
+function parseKML(text){
+  const doc=new DOMParser().parseFromString(text,"application/xml");
+  if(doc.getElementsByTagName("parsererror").length)throw new Error("That file isn't valid KML.");
+  const out=[];
+  byTag(doc,"Placemark").forEach((pm,i)=>{
+    const polys=[];
+    byTag(pm,"Polygon").forEach(pg=>{
+      const ob=byTag(pg,"outerBoundaryIs")[0];if(!ob)return;
+      const outer=parseCoords((byTag(ob,"coordinates")[0]||{}).textContent||"");
+      if(outer.length<3)return;
+      const holes=byTag(pg,"innerBoundaryIs").map(ib=>parseCoords((byTag(ib,"coordinates")[0]||{}).textContent||"")).filter(h=>h.length>=3);
+      polys.push([outer,...holes]);
+    });
+    if(!polys.length){ // closed LineString drawn as a zone outline
+      byTag(pm,"LineString").forEach(ls=>{const c=parseCoords((byTag(ls,"coordinates")[0]||{}).textContent||"");if(c.length>=4){const a=c[0],b=c[c.length-1];if(Math.abs(a[0]-b[0])<1e-6&&Math.abs(a[1]-b[1])<1e-6)polys.push([c])}});
+    }
+    if(!polys.length)return;
+    const nm=pm.getElementsByTagNameNS("*","name")[0];
+    const name=(nm&&nm.parentNode===pm&&nm.textContent.trim())||"Zone "+(out.length+1);
+    out.push({name,polys,bbox:mergeBBox(polys.map(p=>ringBBox(p[0])))});
+  });
+  if(!out.length)throw new Error("No polygons found. Draw each zone as a shape (polygon), not a line or pin.");
+  return out;
+}
+/* ---------- address data ---------- */
+function isBiz(t){if(t.building&&BIZ_BUILDINGS.test(t.building))return true;return BIZ_KEYS.some(k=>t[k]&&t[k]!=="no")}
+function flatsOf(t){const v=parseInt(t["building:flats"]||t["addr:flats"]&&!/[-;,]/.test(t["addr:flats"])&&t["addr:flats"],10);if(v>0&&v<2000)return v;
+  const r=(t["addr:flats"]||"").match(/^(\d+)\s*-\s*(\d+)$/);if(r){const n=+r[2]-+r[1]+1;if(n>0&&n<2000)return n}return 0}
+
+function addrLabel(t){const n=t["addr:housenumber"];if(n)return (t["addr:unit"]?t["addr:unit"]+"/":"")+n+(t["addr:street"]?" "+t["addr:street"]:"");return t.name||t["addr:street"]||""}
+// features: {lat,lon,tags,ring|null}
+function classifyOSM(features){
+  const apts=[],addrs=[];
+  for(const f of features){
+    const t=f.tags||{};
+    if(t.building&&APT_BUILDINGS.test(t.building)){apts.push({...f,flats:flatsOf(t),inside:0});continue}
+    if(t["addr:housenumber"])addrs.push(f);
+  }
+  for(const a of apts)a.bbox=a.ring?ringBBox(a.ring):null;
+  const seen=new Set(),out=[];
+  for(const f of addrs){
+    const t=f.tags;
+    const key=[t["addr:unit"]||"",t["addr:housenumber"],t["addr:street"]||(f.lat.toFixed(4)+","+f.lon.toFixed(4))].join("|").toLowerCase().replace(/\s+/g," ");
+    if(seen.has(key))continue;seen.add(key);
+    const label=addrLabel(t)+(t.name&&t["addr:housenumber"]?" ("+t.name+")":"");
+    if(isBiz(t)){out.push({lat:f.lat,lon:f.lon,cls:"biz",w:1,label});continue}
+    let host=null;
+    for(const a of apts){if(a.bbox&&f.lon>=a.bbox[0]&&f.lon<=a.bbox[2]&&f.lat>=a.bbox[1]&&f.lat<=a.bbox[3]&&inRing(f.lon,f.lat,a.ring)){host=a;break}}
+    const unitish=!!t["addr:unit"]||/\//.test(t["addr:housenumber"]);
+    if(host){host.inside++;out.push({lat:f.lat,lon:f.lon,cls:"apt",w:host.flats?0:1,label});continue}
+    if(unitish){out.push({lat:f.lat,lon:f.lon,cls:"apt",w:1,label});continue}
+    const fl=flatsOf(t);
+    if(fl>1){out.push({lat:f.lat,lon:f.lon,cls:"apt",w:fl,label});continue}
+    out.push({lat:f.lat,lon:f.lon,cls:"house",w:1,label});
+  }
+  for(const a of apts){
+    const w=a.flats?a.flats:(a.inside?0:1);
+    out.push({lat:a.lat,lon:a.lon,cls:"apt",w,label:(addrLabel(a.tags||{})||"Apartment building")+(a.flats?` · ${a.flats} units`:"")});
+  }
+  return out;
+}
+function fromOverpass(j){
+  const feats=[];
+  for(const e of j.elements||[]){
+    if(e.type==="node"&&e.lat!=null)feats.push({lat:e.lat,lon:e.lon,tags:e.tags||{},ring:null});
+    else if(e.geometry&&e.geometry.length){const ring=e.geometry.filter(Boolean).map(p=>[p.lon,p.lat]);const[x,y]=centroid(ring);feats.push({lat:y,lon:x,tags:e.tags||{},ring:ring.length>=3?ring:null})}
+    else if(e.center)feats.push({lat:e.center.lat,lon:e.center.lon,tags:e.tags||{},ring:null});
+    else if(e.bounds)feats.push({lat:(e.bounds.minlat+e.bounds.maxlat)/2,lon:(e.bounds.minlon+e.bounds.maxlon)/2,tags:e.tags||{},ring:null});
+  }
+  return classifyOSM(feats);
+}
+function fromGeoJSON(j){
+  const feats=[];
+  for(const f of j.features||[]){
+    const g=f.geometry;if(!g)continue;
+    const p=f.properties||{};const tags=p.tags&&typeof p.tags==="object"?p.tags:p;
+    let ring=null,pt=null;
+    if(g.type==="Point")pt=g.coordinates;
+    else if(g.type==="Polygon"){ring=g.coordinates[0];pt=centroid(ring)}
+    else if(g.type==="MultiPolygon"){ring=g.coordinates[0][0];pt=centroid(ring)}
+    else if(g.type==="LineString"){pt=centroid(g.coordinates)}
+    if(pt)feats.push({lat:pt[1],lon:pt[0],tags,ring});
+  }
+  return classifyOSM(feats);
+}
+function splitLine(line,d){const out=[];let cur="",q=false;for(let i=0;i<line.length;i++){const c=line[i];if(q){if(c==='"'){if(line[i+1]==='"'){cur+='"';i++}else q=false}else cur+=c}else if(c==='"')q=true;else if(c===d){out.push(cur);cur=""}else cur+=c}out.push(cur);return out}
+function fromCSV(text){
+  const lines=text.split(/\r?\n/).filter(l=>l.trim());
+  if(lines.length<2)throw new Error("The CSV has no rows.");
+  const d=[",","|","\t",";"].sort((a,b)=>lines[0].split(b).length-lines[0].split(a).length)[0];
+  const h=splitLine(lines[0],d).map(s=>s.trim().toLowerCase());
+  const find=names=>h.findIndex(x=>names.includes(x));
+  const iLat=find(["lat","latitude","y"]),iLon=find(["lon","lng","long","longitude","x"]);
+  if(iLat<0||iLon<0)throw new Error("Couldn't find latitude and longitude columns in the CSV.");
+  const iUnit=find(["unit","flat","flat_number","unit_number","flat_no","unit_no","addr:unit"]);
+  const iType=find(["type","category","class","property_type"]);
+  const iKey=find(["address","full_address","address_detail_pid","gnaf_pid","id"]);
+  const seen=new Set(),out=[];
+  for(let r=1;r<lines.length;r++){
+    const c=splitLine(lines[r],d);const lat=parseFloat(c[iLat]),lon=parseFloat(c[iLon]);
+    if(!isFinite(lat)||!isFinite(lon))continue;
+    if(iKey>=0){const k=(c[iKey]||"").trim().toLowerCase();if(k){if(seen.has(k))continue;seen.add(k)}}
+    const typ=iType>=0?(c[iType]||"").toLowerCase():"";
+    let cls="house";
+    if((iUnit>=0&&(c[iUnit]||"").trim())||/apart|unit|flat/.test(typ))cls="apt";
+    else if(/business|commercial|shop|office|retail|industrial/.test(typ))cls="biz";
+    out.push({lat,lon,cls,w:1});
+  }
+  return out;
+}
+// a browser "Save page" of a JSON result wraps it in HTML; pull the JSON back out
+function unwrapHTML(text){
+  try{
+    const d=new DOMParser().parseFromString(text,"text/html");
+    const t=(d.body&&d.body.textContent)||"";
+    const i=t.indexOf("{"),j=t.lastIndexOf("}");
+    if(i>=0&&j>i)return t.slice(i,j+1);
+  }catch(e){}
+  return text;
+}
+async function readAddrFile(file){
+  let text=await file.text();
+  if(/^\s*</.test(text)&&!/^\s*<\?xml[\s\S]{0,200}<osm/i.test(text)){
+    if(/runtime error|too busy|rate_limited|Too Many Requests/i.test(text))throw new Error("That's an error page from the server, not data. Try again later.");
+    text=unwrapHTML(text);
+  }
+  const trimmed=text.trimStart();
+  if(trimmed[0]==="{"){
+    let j;try{j=JSON.parse(text)}catch(e){throw new Error("That JSON file couldn't be read. If you saved it from the browser, save as raw data rather than a web page.")}
+    if(j.remark&&!(j.elements||[]).length)throw new Error("Overpass returned an error: "+String(j.remark).slice(0,160));
+    if(Array.isArray(j.elements))return fromOverpass(j);
+    if(j.type==="FeatureCollection")return fromGeoJSON(j);
+    throw new Error("JSON format not recognised. Use Overpass JSON or GeoJSON.");
+  }
+  if(trimmed[0]==="<")throw new Error("That looks like a web page or XML, not address data. Save the Overpass result as .json.");
+  return fromCSV(text);
+}
+
+// split an area into ~2 km tiles, keeping only tiles that touch a zone
+function areaParts(bbox,zs){
+  const pad=0.0008,b=[bbox[0]-pad,bbox[1]-pad,bbox[2]+pad,bbox[3]+pad];
+  const k=Math.cos((b[1]+b[3])/2*Math.PI/180);
+  const wKm=(b[2]-b[0])*111.32*k,hKm=(b[3]-b[1])*110.57;
+  const nx=Math.max(1,Math.ceil(wKm/2)),ny=Math.max(1,Math.ceil(hKm/2));
+  const dx=(b[2]-b[0])/nx,dy=(b[3]-b[1])/ny,out=[];
+  for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){
+    const t=[b[0]+i*dx,b[1]+j*dy,b[0]+(i+1)*dx,b[1]+(j+1)*dy];
+    if(nx*ny===1||zs.some(z=>tileTouches(t,z)))out.push(t);
+  }
+  return {parts:out,km2:wKm*hKm,all:b};
+}
+function tileTouches(t,z){
+  // sample a grid inside the tile, plus any zone vertex inside the tile
+  for(let a=0;a<=4;a++)for(let c=0;c<=4;c++)if(inZone(t[0]+(t[2]-t[0])*a/4,t[1]+(t[3]-t[1])*c/4,z))return true;
+  return z.polys.some(p=>p[0].some(([x,y])=>x>=t[0]&&x<=t[2]&&y>=t[1]&&y<=t[3]));
+}
+/* ---------- counting ---------- */
+function count(){
+  const on={house:$("fHouse").checked,apt:$("fApt").checked,biz:$("fBiz").checked};
+  const rows=zones.map(z=>({name:z.name,house:0,apt:0,biz:0,newest:0}));
+  const tot={house:0,apt:0,biz:0,newest:0};let overlap=0;
+  for(const r of records){
+    r.z=-1;let hits=0;
+    const latest=Math.max(r.updated||0,r.added||0),aged=on[r.cls]&&r.w>0&&latest>0;
+    zones.forEach((z,i)=>{if(inZone(r.lon,r.lat,z)){rows[i][r.cls]+=r.w;if(aged&&latest>rows[i].newest)rows[i].newest=latest;hits++;if(r.z<0)r.z=i}});
+    if(hits){tot[r.cls]+=r.w;if(aged&&latest>tot.newest)tot.newest=latest;if(hits>1)overlap+=r.w}
+  }
+  const mail=o=>(on.house?o.house:0)+(on.apt?o.apt:0)+(on.biz?o.biz:0);
+  const monthYear=t=>t?new Date(t).toLocaleDateString(undefined,{month:"short",year:"numeric"}):"—";
+  rows.forEach(r=>{r.total=mail(r);r.changed=monthYear(r.newest)});tot.total=mail(tot);tot.changed=monthYear(tot.newest);
+  lastRows=rows;
+  $("nHouse").textContent=tot.house.toLocaleString();$("nApt").textContent=tot.apt.toLocaleString();$("nBiz").textContent=tot.biz.toLocaleString();
+  const td=(v,k)=>`<td class="${on[k]?"":"off"}">${v.toLocaleString()}</td>`;
+  const esc=s=>s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  $("tbody").innerHTML=rows.map(r=>`<tr><td><span class="zname"><i></i>${esc(r.name)}</span></td>${td(r.house,"house")}${td(r.apt,"apt")}${td(r.biz,"biz")}<td class="count">${r.total.toLocaleString()}</td><td class="age">${r.changed}</td></tr>`).join("")||`<tr><td colspan="6">No zones loaded.</td></tr>`;
+  $("tfoot").innerHTML=`<tr><td>Total${overlap?" (each address once)":""}</td>${td(tot.house,"house")}${td(tot.apt,"apt")}${td(tot.biz,"biz")}<td class="count">${tot.total.toLocaleString()}</td><td class="age">${tot.changed}</td></tr>`;
+  $("bigTotal").textContent=tot.total.toLocaleString();
+  const parts=[on.house&&"houses",on.apt&&"apartments",on.biz&&"businesses"].filter(Boolean);
+  $("bigWhat").textContent=`${parts.length?parts.join(" + "):"nothing selected"} across ${zones.length} zone${zones.length===1?"":"s"}`+(on.apt?"":" · apartments excluded");
+  $("overlapNote").textContent=overlap?`Some zones overlap. ${overlap.toLocaleString()} mailboxes sit in more than one zone; they appear in each zone row but only once in the total.`:"";
+  drawMap(on);
+}
+
+/* ---------- NSW address register (Spatial Services) ---------- */
+const NSW_URL="https://portal.spatial.nsw.gov.au/server/rest/services/NSW_Geocoded_Addressing_Theme_multiCRS/MapServer/1/query";
+const NSW_BOX=[140.99,-37.51,153.65,-28.15];
+function inNSW(b){return b[0]>=NSW_BOX[0]&&b[2]<=NSW_BOX[2]&&b[1]>=NSW_BOX[1]&&b[3]<=NSW_BOX[3]}
+async function nswRequest(params){
+  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),60000);
+  try{
+    const res=await fetch(NSW_URL+"?"+new URLSearchParams(params),{signal:ctrl.signal});
+    if(!res.ok)throw new Error("NSW register answered "+res.status);
+    const j=await res.json();
+    if(j.error)throw new Error("NSW register: "+(j.error.message||"error"));
+    return j;
+  }catch(e){throw e.name==="AbortError"?new Error("NSW register timed out"):e}
+  finally{clearTimeout(timer)}
+}
+// every current address point inside a box, 2,000 at a time
+async function nswFetchBox(b,onProgress){
+  const base={geometry:b.map(v=>v.toFixed(6)).join(","),geometryType:"esriGeometryEnvelope",inSR:"4326",spatialRel:"esriSpatialRelIntersects",where:"1=1",f:"json"};
+  const {count=0}=await nswRequest({...base,returnCountOnly:"true"});
+  const out=[];let offset=0;
+  while(offset<count+2000){
+    const j=await nswRequest({...base,outFields:"address,housenumber,principaladdresssiteoid,lastupdate,enddate,startdate",returnGeometry:"true",outSR:"4326",geometryPrecision:"6",orderByFields:"OBJECTID",resultOffset:String(offset),resultRecordCount:"2000"});
+    const f=j.features||[];
+    for(const x of f){if(x.geometry)out.push([x.geometry.x,x.geometry.y,x.attributes.address||"",x.attributes.housenumber||"",x.attributes.principaladdresssiteoid,x.attributes.lastupdate,x.attributes.enddate,x.attributes.startdate])}
+    onProgress&&onProgress(out.length,count);
+    if(!f.length||!j.exceededTransferLimit)break;
+    offset+=f.length;
+  }
+  return out;
+}
+const titleCase=s=>s.toLowerCase().replace(/(^|[\s/-])([a-z])/g,(m,a,b)=>a+b.toUpperCase());
+const NSW_BIZ=/^(SHOP|SUITE|OFFICE|KIOSK|FACTORY|WAREHOUSE|STALL|SHOWROOM|LEVEL)\b/;
+const NSW_UNIT=/^(UNIT|FLAT|APARTMENT|APT|VILLA|TOWNHOUSE)\b/;
+// rows: [lon,lat,address,housenumber,site,lastupdate,enddate,startdate]
+function fromNSW(rows,bizKeys){
+  const now=Date.now(),seen=new Set(),cur=[];
+  for(const r of rows){if(r[6]&&r[6]<now)continue;const a=r[2].trim().toUpperCase();if(!a||seen.has(a))continue;seen.add(a);cur.push(r)}
+  const isUnit=r=>/\//.test(r[3])||NSW_UNIT.test(r[2].toUpperCase());
+  const unitsPerSite=new Map();
+  for(const r of cur)if(isUnit(r)&&!NSW_BIZ.test(r[2].toUpperCase()))unitsPerSite.set(r[4],(unitsPerSite.get(r[4])||0)+1);
+  const out=[];
+  for(const r of cur){
+    const A=r[2].toUpperCase(),label=titleCase(r[2]),updated=r[5]||null,added=r[7]||null,base={lat:r[1],lon:r[0],label,updated,added};
+    if(NSW_BIZ.test(A)){out.push({...base,cls:"biz",w:1});continue}
+    const units=unitsPerSite.get(r[4])||0;
+    if(isUnit(r)){out.push({...base,cls:units>=3?"apt":"house",w:1,note:units<3?"Dual occupancy, counted as a house":""});continue}
+    if(units){out.push({...base,cls:units>=3?"apt":"house",w:0,note:units>=3?`Building with ${units} units; each unit is counted`:"Its units are counted instead"});continue}
+    if(bizKeys.some(k=>A.startsWith(k+" ")||A.startsWith(k+"\u0000"))){out.push({...base,cls:"biz",w:1,note:"Business per OpenStreetMap"});continue}
+    out.push({...base,cls:"house",w:1});
+  }
+  return out;
+}
+// "12 SMITH STREET" keys for addresses OpenStreetMap marks as businesses
+function osmBizKeys(jsons){
+  const keys=new Set();
+  for(const j of jsons)for(const e of j.elements||[]){const t=e.tags||{};if(t["addr:housenumber"]&&t["addr:street"]&&isBiz(t))keys.add((t["addr:housenumber"]+" "+t["addr:street"]).toUpperCase().replace(/\s+/g," "))}
+  return [...keys];
+}
+
+/* ---------- fetching addresses from OpenStreetMap ---------- */
+const SERVERS=[
+  "https://overpass.private.coffee/api/interpreter",
+  "https://overpass-api.de/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter"
+];
+const CACHE_DAYS=14;
+function buildQuery(b){
+  const f=v=>v.toFixed(5);
+  return `[out:json][timeout:120][bbox:${f(b[1])},${f(b[0])},${f(b[3])},${f(b[2])}];
+nwr["building"~"^(apartments|flats|dormitory)$"]->.apt;
+.apt out geom qt;
+(nwr["addr:housenumber"]; - .apt;);
+out center tags qt;`;
+}
+class TooBig extends Error{}
+// try each server in turn; a busy or failing server just moves on to the next
+async function overpass(q){
+  let last=null;
+  for(const url of SERVERS){
+    const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),130000);
+    try{
+      const res=await fetch(url,{method:"POST",body:new URLSearchParams({data:q}),signal:ctrl.signal});
+      if(!res.ok){last=new Error(`${new URL(url).host} answered ${res.status}`);continue}
+      const j=await res.json();
+      if(j.remark&&/timed out|out of memory|run out of memory/i.test(j.remark))throw new TooBig(j.remark);
+      return j;
+    }catch(e){
+      if(e instanceof TooBig)throw e;
+      last=e.name==="AbortError"?new Error("the request timed out"):e;
+    }finally{clearTimeout(timer)}
+  }
+  throw last||new Error("no data server answered");
+}
+// small IndexedDB store so repeat visits load instantly
+const store={
+  db:null,
+  open(){if(this.db)return this.db;this.db=new Promise((res,rej)=>{const r=indexedDB.open("letterbox-count",1);r.onupgradeneeded=()=>r.result.createObjectStore("q");r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});return this.db},
+  async get(k){try{const db=await this.open();return await new Promise(res=>{const r=db.transaction("q").objectStore("q").get(k);r.onsuccess=()=>res(r.result||null);r.onerror=()=>res(null)})}catch(e){return null}},
+  async set(k,v){try{const db=await this.open();await new Promise(res=>{const tx=db.transaction("q","readwrite");tx.objectStore("q").put(v,k);tx.oncomplete=tx.onerror=()=>res()})}catch(e){}}
+};
+const seenRec=new Set();
+function addRecords(recs){let n=0;for(const r of recs){const k=r.cls+"|"+r.lat.toFixed(6)+"|"+r.lon.toFixed(6)+"|"+r.w+"|"+(r.label||"");if(seenRec.has(k))continue;seenRec.add(k);records.push(r);n++}return n}
+function progress(f){const p=$("prog");if(f==null){p.hidden=true;return}p.hidden=false;$("progBar").style.width=Math.round(Math.min(1,Math.max(0.04,f))*100)+"%"}
+let fetchRun=0,dataSource="";
+const NSW_CACHE_DAYS=1; // the register updates daily, so never reuse a copy older than a day
+const shortDate=t=>new Date(t).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"});
+// OpenStreetMap: one request for the whole area, or ~2 km parts when that's too big
+async function fetchOSM(all,parts,km2,force,run,report){
+  let oldest=Date.now(),allCached=true;
+  const getOne=async q=>{
+    if(!force){const c=await store.get(q);if(c&&c.j&&Date.now()-c.t<CACHE_DAYS*864e5){oldest=Math.min(oldest,c.t);return c.j}}
+    allCached=false;const j=await overpass(q);await store.set(q,{t:Date.now(),j});return j;
+  };
+  const getTile=async(b,depth)=>{
+    try{return [await getOne(buildQuery(b))]}
+    catch(e){if(depth>=2)throw e;const mx=(b[0]+b[2])/2,my=(b[1]+b[3])/2,out=[];
+      for(const t of [[b[0],b[1],mx,my],[mx,b[1],b[2],my],[b[0],my,mx,b[3]],[mx,my,b[2],b[3]]])out.push(...await getTile(t,depth+1));return out}
+  };
+  const jsons=[];
+  const wq=buildQuery(all);
+  let useTiles=km2>30;
+  if(!useTiles&&!force){const c=await store.get(wq);if(c&&c.tiles)useTiles=true}
+  if(!useTiles){
+    try{jsons.push(await getOne(wq))}
+    catch(e){useTiles=true;await store.set(wq,{t:Date.now(),tiles:true})}
+  }
+  if(useTiles){
+    for(let i=0;i<parts.length;i++){
+      if(run!==fetchRun)return {jsons:[],allCached,oldest};
+      if(report){setStatus("addrStatus",`Fetching addresses, part ${i+1} of ${parts.length}…`);progress((i+0.3)/parts.length)}
+      jsons.push(...await getTile(parts[i],0));
+    }
+  }
+  return {jsons,allCached,oldest};
+}
+// NSW register first (official, updated daily); OpenStreetMap fills in businesses, or everything outside NSW
+async function fetchAddresses(force){
+  if(!baseZones.length)return;
+  const run=++fetchRun;
+  $("refreshBtn").setAttribute("aria-disabled","true");
+  const zb=mergeBBox(baseZones.map(z=>z.bbox));
+  const {parts,km2,all}=areaParts(zb,baseZones);
+  const useNSW=inNSW(zb);
+  progress(0.04);setStatus("addrStatus",useNSW?"Fetching from the NSW address register…":"Fetching addresses for your zones…");
+  const nswP=useNSW?(async()=>{
+    const key="nsw2:"+all.map(v=>v.toFixed(5)).join(",");
+    if(!force){const c=await store.get(key);if(c&&c.rows&&Date.now()-c.t<NSW_CACHE_DAYS*864e5)return {rows:c.rows,t:c.t,cached:true}}
+    const rows=await nswFetchBox(all,(n,tot)=>{if(run===fetchRun){progress(tot?n/tot:0.5);setStatus("addrStatus",`Fetching from the NSW address register… ${n.toLocaleString()} of ${tot.toLocaleString()}`)}});
+    const t=Date.now();await store.set(key,{t,rows});return {rows,t,cached:false};
+  })():Promise.resolve(null);
+  const [nsw,osm]=await Promise.allSettled([nswP,fetchOSM(all,parts,km2,force,run,!useNSW)]);
+  if(run!==fetchRun)return;
+  progress(null);$("refreshBtn").removeAttribute("aria-disabled");
+  records=[];seenRec.clear();
+  const osmOk=osm.status==="fulfilled";
+  if(nsw.status==="fulfilled"&&nsw.value){
+    addRecords(fromNSW(nsw.value.rows,osmOk?osmBizKeys(osm.value.jsons):[]));
+    dataSource="nsw";count();
+    const inside=records.filter(r=>r.z>=0).length;
+    const when=nsw.value.cached?`saved copy from ${shortDate(nsw.value.t)}`:"current as of today";
+    setStatus("addrStatus",`${inside.toLocaleString()} addresses inside your zones, from the NSW address register (${when}).`+(osmOk?" Businesses identified from OpenStreetMap.":" Business details couldn't be fetched right now, so businesses show as houses or units."),inside?"ok":"err");
+    return;
+  }
+  if(osmOk){
+    for(const j of osm.value.jsons)addRecords(fromOverpass(j));
+    dataSource="osm";count();
+    const inside=records.filter(r=>r.z>=0).length;
+    const when=osm.value.allCached?` · saved copy from ${shortDate(osm.value.oldest)}`:"";
+    const nswNote=useNSW?` The NSW address register couldn't be reached (${nsw.reason&&nsw.reason.message||"no answer"}); try Refresh later for official data.`:"";
+    setStatus("addrStatus",`${inside.toLocaleString()} addresses inside your zones, from OpenStreetMap${when}.${nswNote}`,inside&&!useNSW?"ok":"err");
+    return;
+  }
+  setStatus("addrStatus",`Couldn't fetch the addresses (${(osm.reason&&osm.reason.message)||"no answer"}). The data servers may be busy; try Refresh in a few minutes, or load your own address file below.`,"err");
+}
+
+/* ---------- map ---------- */
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let map=null,tiles=null,zoneLayer=null,pointLayer=null,canvasR=null,zonesDrawnKey="",fitKey="";
+function isDark(){const t=document.documentElement.getAttribute("data-theme");if(t)return t==="dark";return window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches}
+function initMap(){
+  if(!window.L){$("mapEmpty").textContent="The map couldn't load. Counts still work.";return}
+  map=L.map("map",{preferCanvas:true,zoomSnap:0.5}).setView([-28,134],4);
+  canvasR=L.canvas({padding:0.5});
+  zoneLayer=L.layerGroup().addTo(map);pointLayer=L.layerGroup().addTo(map);
+  setTiles();
+}
+function setTiles(){
+  if(!map)return;
+  if(!tiles)tiles=L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,
+    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
+  // no key-free dark map exists, so dark mode inverts the standard tiles
+  $("map").classList.toggle("dark-tiles",isDark());
+}
+const REGISTER_START=Date.UTC(2008,4,1); // the register was loaded in April 2008
+const CLS_NAME={house:"House",apt:"Apartment / unit",biz:"Business"};
+function drawMap(on){
+  $("mapEmpty").hidden=!!zones.length;
+  if(!map)return;
+  const key=baseZones.map(z=>z.name+z.bbox.join()).join("|")+(isDark()?"d":"l");
+  if(key!==zonesDrawnKey){
+    const zk=key.slice(0,-1),refit=zk!==fitKey;fitKey=zk;
+    zonesDrawnKey=key;zoneLayer.clearLayers();
+    for(const z of zones){
+      const ll=z.polys.map(p=>p.map(r=>r.map(([x,y])=>[y,x])));
+      L.polygon(ll,{color:css("--zone"),weight:2,fillColor:css("--zone"),fillOpacity:.07,interactive:false}).addTo(zoneLayer);
+      const big=z.polys.reduce((a,p)=>p[0].length>a[0].length?p:a);const[cx,cy]=centroid(big[0]);
+      L.tooltip({permanent:true,direction:"center",className:"zlabel",interactive:false}).setLatLng([cy,cx]).setContent(esc(z.name)).addTo(zoneLayer);
+    }
+    if(refit&&zones.length){const b=mergeBBox(zones.map(z=>z.bbox));map.fitBounds([[b[1],b[0]],[b[3],b[2]]],{padding:[24,24]})}
+  }
+  pointLayer.clearLayers();
+  const col={house:css("--house"),apt:css("--apt"),biz:css("--biz")},ring=css("--surface");
+  for(const r of records){
+    const active=r.z>=0&&on[r.cls];
+    const m=L.circleMarker([r.lat,r.lon],{renderer:canvasR,radius:r.w>1?7:4.5,color:ring,weight:active?1:0,fillColor:col[r.cls],fillOpacity:active?.95:.22,opacity:active?1:0});
+    m.bindPopup(()=>`<strong>${esc(r.label||"Address")}</strong><br>${CLS_NAME[r.cls]}${r.w>1?` · ${r.w} mailboxes`:r.w===0&&!r.note?" · counted with its building":""}${r.note?`<br>${esc(r.note)}`:""}${r.added?`<br><span style="opacity:.75">${r.added<REGISTER_START?"In the NSW register since it began (2008)":"Added to the NSW register: "+new Date(r.added).toLocaleDateString(undefined,{month:"short",year:"numeric"})}${r.updated&&r.updated-r.added>864e5?" · last changed "+new Date(r.updated).toLocaleDateString(undefined,{month:"short",year:"numeric"}):""}</span>`:""}${r.z<0?"<br><em>Outside your zones</em>":on[r.cls]?"":"<br><em>Not counted (filtered out)</em>"}`);
+    pointLayer.addLayer(m);
+  }
+}
+
+/* ---------- remembering zones and settings ---------- */
+const SAVE_KEY="lbc-zones",PREF_KEY="lbc-filters";
+function saveZones(name,text){try{localStorage.setItem(SAVE_KEY,JSON.stringify({name,text}))}catch(e){}}
+function loadSavedZones(){try{return JSON.parse(localStorage.getItem(SAVE_KEY)||"null")}catch(e){return null}}
+function saveFilters(){try{localStorage.setItem(PREF_KEY,JSON.stringify({h:$("fHouse").checked,a:$("fApt").checked,b:$("fBiz").checked}))}catch(e){}}
+function loadFilters(){try{const p=JSON.parse(localStorage.getItem(PREF_KEY)||"null");if(p){$("fHouse").checked=!!p.h;$("fApt").checked=!!p.a;$("fBiz").checked=!!p.b}}catch(e){}}
+
+/* ---------- zones ---------- */
+let baseZones=[];
+// natural order: "Zone 2" before "Zone 10", "Zone 4a" before "Zone 4b"
+const byName=new Intl.Collator(undefined,{numeric:true,sensitivity:"base"});
+function setBaseZones(list){baseZones=list.slice().sort((a,b)=>byName.compare(a.name,b.name));zones=baseZones.slice()}
+async function readZoneFile(file){
+  let text;
+  if(/\.kmz$/i.test(file.name)){
+    if(!window.JSZip)throw new Error("KMZ support didn't load. Try a .kml export instead.");
+    const zip=await JSZip.loadAsync(file);
+    const entry=Object.values(zip.files).find(f=>/\.kml$/i.test(f.name));
+    if(!entry)throw new Error("No .kml found inside that KMZ.");
+    text=await entry.async("string");
+  }else text=await file.text();
+  return {zones:parseKML(text),text};
+}
+
+/* ---------- wiring ---------- */
+function setStatus(id,msg,kind){const el=$(id);el.textContent=msg;el.className="status"+(kind?" "+kind:"")}
+function zoneSummary(name,extra){return `${baseZones.length} zone${baseZones.length>1?"s":""} from ${name}${extra||""}`}
+async function handleZone(file){
+  if(!file)return;setStatus("zoneStatus","Reading "+file.name+"…");
+  try{
+    const {zones:zs,text}=await readZoneFile(file);
+    setBaseZones(zs);saveZones(file.name,text);
+    records=[];seenRec.clear();
+    setStatus("zoneStatus",zoneSummary(file.name),"ok");$("forgetZones").hidden=false;
+    count();
+    fetchAddresses(false);
+  }catch(e){setStatus("zoneStatus",e.message,"err")}
+}
+async function handleAddr(files){
+  files=Array.from(files||[]);if(!files.length)return;
+  fetchRun++;progress(null);$("refreshBtn").removeAttribute("aria-disabled");
+  records=[];seenRec.clear();dataSource="file";
+  const errs=[],ok=[];
+  for(const file of files){
+    setStatus("addrStatus","Reading "+file.name+"…");
+    try{const recs=await readAddrFile(file);if(!recs.length)throw new Error("no addresses in it");addRecords(recs);ok.push(file.name)}
+    catch(e){errs.push(file.name+": "+e.message)}
+  }
+  count();
+  const inside=records.filter(r=>r.z>=0).length;
+  const msg=ok.length?`${inside.toLocaleString()} addresses inside your zones, from ${ok.join(", ")}`:"No address data loaded";
+  setStatus("addrStatus",errs.length?msg+". Problem with "+errs.join("; "):msg,errs.length||!inside?"err":"ok");
+}
+function wireDrop(dropId,inputId,fn){
+  const d=$(dropId),inp=$(inputId);
+  inp.addEventListener("change",async()=>{const f=Array.from(inp.files);await fn(f);inp.value=""});
+  ["dragenter","dragover"].forEach(ev=>d.addEventListener(ev,e=>{e.preventDefault();d.classList.add("over")}));
+  ["dragleave","drop"].forEach(ev=>d.addEventListener(ev,e=>{e.preventDefault();d.classList.remove("over")}));
+  d.addEventListener("drop",e=>fn(Array.from(e.dataTransfer.files)));
+}
+wireDrop("zoneDrop","zoneFile",f=>handleZone(f[0]));
+wireDrop("addrDrop","addrFile",handleAddr);
+["fHouse","fApt","fBiz"].forEach(id=>$(id).addEventListener("change",()=>{saveFilters();count()}));
+$("refreshBtn").addEventListener("click",()=>{if(!baseZones.length){setStatus("addrStatus","Load your zones first.","err");return}fetchAddresses(true)});
+$("clearAddr").addEventListener("click",()=>{fetchRun++;progress(null);records=[];seenRec.clear();setStatus("addrStatus","Address data cleared. Use Refresh to fetch it again.");count()});
+$("forgetZones").addEventListener("click",()=>{try{localStorage.removeItem(SAVE_KEY)}catch(e){}fetchRun++;progress(null);setBaseZones([]);records=[];seenRec.clear();zonesDrawnKey="";fitKey="";
+  setStatus("zoneStatus","No zones loaded.");setStatus("addrStatus","Load zones to fetch their addresses.");$("forgetZones").hidden=true;count()});
+
+function tableCSV(){
+  const on={house:$("fHouse").checked,apt:$("fApt").checked,biz:$("fBiz").checked};
+  const q=s=>/[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
+  const lines=["Zone,Houses,Apartments,Businesses,Mailboxes,Latest update"];
+  lastRows.forEach(r=>lines.push([q(r.name),r.house,r.apt,r.biz,r.total,r.changed].join(",")));
+  lines.push("Total,"+[$("nHouse").textContent,$("nApt").textContent,$("nBiz").textContent,$("bigTotal").textContent].map(s=>s.replace(/,/g,"")).join(","));
+  lines.push(`Counted: ${[on.house&&"houses",on.apt&&"apartments",on.biz&&"businesses"].filter(Boolean).join(" + ")}`);
+  return lines.join("\n");
+}
+$("copyBtn").addEventListener("click",()=>{
+  const txt=tableCSV().replace(/,/g,"\t");
+  const done=()=>{$("copyBtn").textContent="Copied";setTimeout(()=>$("copyBtn").textContent="Copy table",1600)};
+  try{navigator.clipboard.writeText(txt).then(done,()=>{$("copyBtn").textContent="Copy blocked"})}catch(e){$("copyBtn").textContent="Copy blocked"}
+});
+$("csvBtn").addEventListener("click",()=>{
+  const blob=new Blob([tableCSV()],{type:"text/csv"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="mailbox-count.csv";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+});
+const retheme=()=>{setTiles();zonesDrawnKey="";count()};
+window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change",retheme);
+new MutationObserver(retheme).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
+
+/* ---------- start ---------- */
+initMap();
+loadFilters();
+const saved=loadSavedZones();
+if(saved&&saved.text){
+  try{setBaseZones(parseKML(saved.text));setStatus("zoneStatus",zoneSummary(saved.name," (remembered from last time)"),"ok");$("forgetZones").hidden=false;count();fetchAddresses(false)}
+  catch(e){count()}
+}else count();
+})();
+</script>
+</body>
+</html>

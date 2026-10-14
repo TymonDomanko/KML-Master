@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{var t=localStorage.getItem("kmlm-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<title>KML Master</title>
+<meta name="description" content="Tools for map zones: build them from suburbs and postcodes, number them, merge them, count the letterboxes in them and print a map page for each. Runs in your browser.">
+<link rel="stylesheet" href="kit/kit.css?v=dev">
+<style>
+body.kit { height: auto; min-height: 100dvh; grid-template-rows: auto 1fr; }
+.home {
+  width: 100%; max-width: 1280px; margin: 0 auto; padding: clamp(28px, 5vw, 64px) 24px 48px;
+  display: grid; grid-template-columns: minmax(0, 440px) minmax(0, 1fr); gap: clamp(28px, 5vw, 72px); align-items: start;
+}
+.intro h1 { font: 700 clamp(34px, 4.6vw, 54px)/1.02 var(--kit-cond); letter-spacing: -.02em; margin: 0; text-wrap: balance; }
+.intro .lede { font-size: 17px; line-height: 1.55; color: var(--kit-muted); margin: 18px 0 28px; max-width: 38ch; }
+.start { display: grid; gap: 12px; }
+.start .drop { padding: 18px 20px; }
+.start .drop strong { font-size: 18px; }
+.ready { display: grid; gap: 10px; padding: 14px 16px; border-radius: 8px; background: var(--kit-surface); border: 1px solid var(--kit-line); }
+.ready p { margin: 0; font-size: 13.5px; }
+.ready p b { font: 500 13px var(--kit-mono); }
+.ready .go { display: flex; flex-wrap: wrap; gap: 8px; }
+.facts { margin: 28px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; font-size: 13.5px; color: var(--kit-muted); max-width: 44ch; }
+.facts li { padding-left: 18px; position: relative; }
+.facts li::before { content: ""; position: absolute; left: 0; top: .55em; width: 8px; height: 8px; border: 1.5px solid var(--kit-zone); border-radius: 2px; transform: rotate(8deg); }
+
+/* the tools, drawn as zones on a plan with the usual route through them */
+.route { position: relative; aspect-ratio: 800 / 600; width: 100%; }
+.route svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.route .grid line { stroke: var(--kit-line); stroke-width: 1; }
+.route .zone { fill: var(--kit-zone-fill); stroke: var(--kit-zone); stroke-width: 1.6; stroke-linejoin: round; transition: fill .15s; }
+.route .zone.on { fill: color-mix(in srgb, var(--kit-zone) 24%, transparent); stroke-width: 2.4; }
+.route .path { fill: none; stroke: var(--kit-signal); stroke-width: 3; stroke-dasharray: 9 7; stroke-linecap: round; stroke-linejoin: round; }
+.route .spur { fill: none; stroke: var(--kit-signal); stroke-width: 2; stroke-dasharray: 2 6; stroke-linecap: round; opacity: .9; }
+.route .pin circle { fill: var(--kit-ink); stroke: var(--kit-paper); stroke-width: 3; }
+.route .end { fill: var(--kit-paper); stroke: var(--kit-signal); stroke-width: 2; }
+.route .pin text { fill: var(--kit-surface); font: 600 15px var(--kit-mono); text-anchor: middle; dominant-baseline: central; }
+.stop {
+  position: absolute; transform: translate(-50%, -50%); width: 27%; max-width: 220px; text-align: center;
+  color: var(--kit-ink) !important; text-decoration: none; display: grid; gap: 3px; padding: 6px 8px; border-radius: 8px;
+}
+.stop b { font: 700 clamp(17px, 1.8vw, 22px)/1.1 var(--kit-cond); letter-spacing: -.005em; }
+.stop span { font-size: 13px; line-height: 1.35; color: var(--kit-muted); }
+.stop:hover b, .stop:focus-visible b { color: var(--kit-accent); }
+.stop .n { display: none; }
+.stop .side { font: 600 12px var(--kit-cond); color: var(--kit-signal); }
+
+.credits { grid-column: 1 / -1; border-top: 1px solid var(--kit-line); padding-top: 18px; font-size: 12.5px; color: var(--kit-muted); display: flex; flex-wrap: wrap; gap: 6px 24px; }
+.credits p { margin: 0; max-width: 70ch; }
+
+@media (max-width: 900px) {
+  .home { grid-template-columns: minmax(0, 1fr); padding-top: 28px; }
+  .route { aspect-ratio: auto; display: grid; gap: 0; padding-left: 4px; }
+  .route svg { display: none; }
+  .stop { position: relative; transform: none; width: auto; max-width: none; left: auto !important; top: auto !important; text-align: left;
+    padding: 12px 0 18px 46px; border-radius: 0; }
+  .stop::before { content: ""; position: absolute; left: 13px; top: 0; bottom: 0; border-left: 3px dashed var(--kit-signal); }
+  .stop:first-child::before { top: 22px; }
+  .stop.last::before { bottom: calc(100% - 22px); }
+  .stop.merge::before { border-left-style: dotted; border-left-width: 3px; opacity: .9; }
+  .stop .n { display: grid; place-items: center; position: absolute; left: 0; top: 10px; width: 30px; height: 30px; border-radius: 50%;
+    background: var(--kit-ink); color: var(--kit-surface); font: 600 14px var(--kit-mono); }
+  .stop.merge .n { background: var(--kit-surface); border: 2px solid var(--kit-signal); color: var(--kit-signal); }
+}
+</style>
+</head>
+<body class="kit" data-tool="home">
+<header class="kit-bar" id="kitBar"></header>
+<script src="kit/kit.js?v=dev"></script>
+
+<main class="home">
+  <section class="intro">
+    <h1>Map zones, from first outline to printed page.</h1>
+    <p class="lede">Tools for planning letterbox drops, flyer runs and installs. Whatever KML you open or download in one tool is ready in the next.</p>
+
+    <div class="start">
+      <label class="drop" id="homeDrop">
+        <strong>Open a KML or KMZ</strong>
+        <span>Click to choose a file, or drop it here. Or start from scratch in Build.</span>
+        <input type="file" id="homeFile" accept=".kml,.kmz,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz">
+      </label>
+      <div class="ready" id="ready" hidden>
+        <p id="readyText"></p>
+        <div class="go" id="readyGo"></div>
+      </div>
+    </div>
+
+    <ul class="facts">
+      <li>Your KML files are read in your browser and never uploaded.</li>
+      <li>The last few files you used are kept under Working file, top right.</li>
+      <li>Works with Google Earth and Google My Maps exports.</li>
+    </ul>
+  </section>
+
+  <nav class="route" aria-label="Tools">
+    <svg viewBox="0 0 800 600" aria-hidden="true">
+      <g class="grid">
+        <line x1="0" y1="100" x2="800" y2="100"/><line x1="0" y1="300" x2="800" y2="300"/><line x1="0" y1="500" x2="800" y2="500"/>
+        <line x1="100" y1="0" x2="100" y2="600"/><line x1="300" y1="0" x2="300" y2="600"/><line x1="500" y1="0" x2="500" y2="600"/><line x1="700" y1="0" x2="700" y2="600"/>
+      </g>
+      <polygon class="zone" data-for="build" points="40,70 230,40 280,150 245,245 70,250 30,160"/>
+      <polygon class="zone" data-for="number" points="320,40 520,60 545,170 470,240 330,215 300,120"/>
+      <polygon class="zone" data-for="count" points="580,200 770,230 760,390 600,410 560,300"/>
+      <polygon class="zone" data-for="pictures" points="380,400 560,430 590,560 400,580 340,500"/>
+      <polygon class="zone" data-for="merge" points="60,350 250,330 290,450 220,560 70,540 40,450"/>
+      <path class="path" d="M140 72 C 230 30, 330 36, 420 74 C 540 96, 640 150, 665 236 C 560 280, 560 400, 470 440"/>
+      <path class="spur" d="M282 46 C 300 200, 220 300, 168 380"/>
+      <circle class="end" cx="168" cy="384" r="5"/>
+      <g class="pin"><circle cx="140" cy="72" r="14"/><text x="140" y="72">1</text></g>
+      <g class="pin"><circle cx="420" cy="74" r="14"/><text x="420" y="74">2</text></g>
+      <g class="pin"><circle cx="665" cy="236" r="14"/><text x="665" y="236">3</text></g>
+      <g class="pin"><circle cx="470" cy="440" r="14"/><text x="470" y="440">4</text></g>
+    </svg>
+    <a class="stop" data-tool="build" href="build/" style="left:19%;top:31%"><span class="n">1</span><b>Build</b><span>Outline suburbs and postcodes as zones</span></a>
+    <a class="stop" data-tool="number" href="number/" style="left:53%;top:32%"><span class="n">2</span><b>Number</b><span>Renumber zones in a sensible walking order</span></a>
+    <a class="stop" data-tool="merge" href="merge/" style="left:21%;top:79%"><span class="n">+</span><b>Merge</b><span>Join zones into one outline</span><span class="side">Any time</span></a>
+    <a class="stop" data-tool="count" href="count/" style="left:86%;top:55%"><span class="n">3</span><b>Count</b><span>Count the letterboxes in each zone</span></a>
+    <a class="stop last" data-tool="pictures" href="pictures/" style="left:59%;top:86%"><span class="n">4</span><b>Pictures</b><span>Print a map page for every zone</span></a>
+  </nav>
+
+  <footer class="credits">
+    <p>Boundaries: ABS (Australia), US Census Bureau, Statistics Canada, LINZ (New Zealand) and OpenStreetMap. Addresses: NSW Spatial Services and OpenStreetMap. Maps © OpenStreetMap contributors, OpenFreeMap and Esri.</p>
+    <p><a href="https://github.com/TymonDomanko/KML-Master">Source on GitHub</a></p>
+  </footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+(function () {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  // hovering a tool lights up its zone on the plan
+  document.querySelectorAll(".stop").forEach(a => {
+    const z = document.querySelector(`.zone[data-for="${a.dataset.tool}"]`);
+    ["mouseenter", "focus"].forEach(ev => a.addEventListener(ev, () => z && z.classList.add("on")));
+    ["mouseleave", "blur"].forEach(ev => a.addEventListener(ev, () => z && z.classList.remove("on")));
+  });
+
+  async function take(file) {
+    if (!file) return;
+    if (!/\.(kml|kmz)$/i.test(file.name)) { KMLKit.toast("<span>That isn't a KML or KMZ file.</span>"); return; }
+    const rec = await KMLKit.keep(file, "home", "opened");
+    showReady(rec);
+  }
+  function showReady(rec) {
+    if (!rec) return;
+    const z = rec.zones == null ? "" : rec.zones === 1 ? ", 1 zone" : `, ${rec.zones} zones`;
+    $("readyText").innerHTML = `<b>${esc(rec.name)}</b>${z}. Open it in:`;
+    $("readyGo").innerHTML = KMLKit.TOOLS.filter(t => t.accepts)
+      .map((t, i) => `<a class="btn ${i === 0 ? "primary" : ""} small" href="${t.id}/">${t.name}</a>`).join("");
+    $("ready").hidden = false;
+  }
+  $("homeFile").addEventListener("change", e => { take(e.target.files[0]); e.target.value = ""; });
+  const drop = $("homeDrop");
+  ["dragenter", "dragover"].forEach(ev => window.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave"].forEach(ev => window.addEventListener(ev, e => { if (!e.relatedTarget) drop.classList.remove("over"); }));
+  window.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over"); take(e.dataTransfer.files[0]); });
+  KMLKit.currentFile().then(showReady);
+})();
+</script>
+</body>
+</html>
